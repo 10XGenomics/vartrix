@@ -1,0 +1,13 @@
+[package]
+name = "vartrix"
+version = "0.1.0"
+authors = ["Ian Fiddes <ian.fiddes@10xgenomics.com>", "Patrick Marks <patrick@10xgenomics.com>"]
+
+[dependencies]
+bio = "*"
+rust-htslib = "0.20"
+docopt = "*"
+csv = "1"
+serde = "*"
+serde_derive = "*"
+failure = "*"
