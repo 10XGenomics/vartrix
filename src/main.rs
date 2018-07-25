@@ -10,7 +10,7 @@ use std::cmp::{max, min};
 #[macro_use]
 extern crate serde_derive;
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fs::File;
 use bio::io::fasta;
 use bio::alignment::pairwise::banded;
@@ -21,15 +21,15 @@ use std::path::Path;
 use std::io::{BufRead, BufReader};
 
 
-pub fn load_barcodes(filename: impl AsRef<Path>) -> Result<HashSet<Vec<u8>>, Error> {
+pub fn load_barcodes(filename: impl AsRef<Path>) -> Result<HashMap<Vec<u8>, usize>, Error> {
     let r = File::open(filename.as_ref())?;
     let reader = BufReader::with_capacity(32 * 1024, r);
 
-    let mut bc_set = HashSet::default();
+    let mut bc_set = HashMap::new();
 
-    for l in reader.lines() {
+    for (i, l) in reader.lines().enumerate() {
         let seq = l?.into_bytes();
-        bc_set.insert(seq);
+        bc_set.insert(seq, i);
     }
 
     Ok(bc_set)
@@ -89,12 +89,7 @@ pub fn useful_rec(haps: &VariantHaps, rec: &bam::Record) -> Result<bool, Error> 
 }
 
 
-pub fn evaluate_alns(bam: &mut bam::IndexedReader, haps: &VariantHaps, cell_barcodes: &HashSet<Vec<u8>>) -> Result<Vec<(String, i32, i32)>, Error>  {
-
-    // Probably need some alignment filtering to handle very long ref-skip alignments that span the locus
-    //let min_len = 25;
-    //let min_score = 25;
-
+pub fn evaluate_alns(bam: &mut bam::IndexedReader, haps: &VariantHaps, cell_barcodes: &HashMap<Vec<u8>, usize>) -> Result<Vec<(String, i32, i32)>, Error>  {
     let tid = bam.header().tid(haps.locus.chrom.as_bytes()).unwrap();
 
     bam.fetch(tid, haps.locus.start, haps.locus.end)?;
@@ -114,7 +109,7 @@ pub fn evaluate_alns(bam: &mut bam::IndexedReader, haps: &VariantHaps, cell_barc
         }
 
         let cb = cb.unwrap();
-        if !cell_barcodes.contains(&cb) {
+        if !cell_barcodes.contains_key(&cb) {
             continue
         }
 
@@ -166,6 +161,7 @@ fn chrom_len(chrom: &str, fa: &mut fasta::IndexedReader<File>) -> u64 {
     0
 }
 
+
 pub fn read_locus(fa: &mut fasta::IndexedReader<File>,
                   loc: &Locus,
                   pad_left: u32,
@@ -184,6 +180,7 @@ pub fn read_locus(fa: &mut fasta::IndexedReader<File>,
     let new_slc = slc.to_ascii_uppercase();
     (new_slc.into_iter().collect(), new_start as usize)
 }
+
 
 // Get padded ref and alt haplotypes around the variant. Locus must cover the REF bases of the VCF variant.
 pub fn construct_haplotypes(fa: &mut fasta::IndexedReader<File>, locus: &Locus, alt: &[u8], padding: u32) -> (Vec<u8>, Vec<u8>)
@@ -209,6 +206,44 @@ pub fn construct_haplotypes(fa: &mut fasta::IndexedReader<File>, locus: &Locus, 
 }
 
 
+pub fn binary_scoring(scores: &Vec<(std::string::String, i32, i32)>) -> Vec<(&String, u8)> {
+    let min_score = 25;
+    let mut parsed_scores = HashMap::new();
+    for (bc, ref_score, alt_score) in scores.into_iter() {
+        if (ref_score < &min_score) & (alt_score < &min_score) {
+            continue;
+        } else if ref_score == alt_score{
+            continue;
+        }
+        
+        if !parsed_scores.contains_key(bc) {
+            parsed_scores.insert(bc, HashSet::new());
+        }
+        
+        if ref_score > alt_score {
+            let mut t = HashSet::new();
+            t.insert(0);
+            parsed_scores.insert(bc, t);
+        } else if alt_score > ref_score {
+            let mut t = HashSet::new();
+            t.insert(1);
+            parsed_scores.insert(bc, t);
+        }
+    }
+
+    let mut result = Vec::new();
+    for (bc, r) in parsed_scores.into_iter() {
+        if r.contains(&1) {
+            result.push((bc, 1 as u8));
+        }
+        else if r.contains(&0) {
+            result.push((bc, 0 as u8));
+        }
+    }
+    result
+}
+
+
 #[cfg(test)]
 mod test {
     use super::*;
@@ -224,25 +259,25 @@ mod test {
         let mut fa = fasta::IndexedReader::from_file(&"../hg19-2.0.0.fa").unwrap();
         let mut rdr = bcf::Reader::from_path("test/test.vcf").unwrap();
         let mut bam = bam::IndexedReader::from_path("test/test.bam").unwrap();
-
         let cell_barcodes = load_barcodes("test/barcode_subset.tsv").unwrap();
+
         for _rec in rdr.records() {
             let rec = _rec.unwrap();
             let chr = String::from_utf8(rec.header().rid2name(rec.rid().unwrap()).to_vec()).unwrap();
             let chr_fa = "chr".to_string() + &chr;
 
             let alleles = rec.alleles();
-            println!("chrom: {:#?}, pos:{}, ref:{:#?}, alt:{:#?}", 
-                chr, 
-                rec.pos(), 
-                String::from_utf8_lossy(alleles[0]), 
-                String::from_utf8_lossy(alleles[1]));
+            //println!("chrom: {:#?}, pos:{}, ref:{:#?}, alt:{:#?}", 
+            //    chr, 
+            //    rec.pos(), 
+            //    String::from_utf8_lossy(alleles[0]), 
+            //    String::from_utf8_lossy(alleles[1]));
 
             let locus = Locus { chrom: chr_fa.to_string(), start: rec.pos(), end: rec.pos() + alleles[0].len() as u32 };
 
             let (rref, alt) = construct_haplotypes(&mut fa, &locus, alleles[1], 75);
-            println!("ref: {:?}", String::from_utf8_lossy(&rref));
-            println!("alt: {:?}", String::from_utf8_lossy(&alt));
+            //println!("ref: {:?}", String::from_utf8_lossy(&rref));
+            //println!("alt: {:?}", String::from_utf8_lossy(&alt));
 
             let haps = VariantHaps {
                 locus: Locus { chrom: chr, start: locus.start, end: locus.end },
@@ -251,7 +286,11 @@ mod test {
             };
 
             let scores = evaluate_alns(&mut bam, &haps, &cell_barcodes).unwrap();
-            println!("scores: {:?}", scores);
+            //println!("scores: {:?}", scores);
+            let result = binary_scoring(&scores);
+            for (bc, r) in result {
+                println!("result: {} {}", bc, r);
+            }
         }
     }
 }
