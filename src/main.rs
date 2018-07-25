@@ -21,6 +21,26 @@ use std::path::Path;
 use std::io::{BufRead, BufReader};
 
 
+fn main() {
+    println!("Hello, world!");
+}
+
+
+#[derive(PartialEq, Eq, Ord, PartialOrd, Hash, Debug, Deserialize, Clone)]
+pub struct Locus {
+    pub chrom: String,
+    pub start: u32,
+    pub end: u32,
+}
+
+
+pub struct VariantHaps {
+    locus: Locus,
+    rref: Vec<u8>,
+    alt: Vec<u8>,
+}
+
+
 pub fn load_barcodes(filename: impl AsRef<Path>) -> Result<HashMap<Vec<u8>, usize>, Error> {
     let r = File::open(filename.as_ref())?;
     let reader = BufReader::with_capacity(32 * 1024, r);
@@ -35,16 +55,6 @@ pub fn load_barcodes(filename: impl AsRef<Path>) -> Result<HashMap<Vec<u8>, usiz
     Ok(bc_set)
 }
 
-
-fn main() {
-    println!("Hello, world!");
-}
-
-pub struct VariantHaps {
-    locus: Locus,
-    rref: Vec<u8>,
-    alt: Vec<u8>,
-}
 
 pub fn get_cell_barcode(rec: &Record) -> Option<Vec<u8>> {
     match rec.aux(b"CB") {
@@ -65,6 +75,7 @@ pub fn complement(b: u8) -> u8 {
     }
 }
 
+
 pub fn rc_seq(vec: &Vec<u8>) -> Vec<u8> {
     let mut res = Vec::new();
 
@@ -74,6 +85,17 @@ pub fn rc_seq(vec: &Vec<u8>) -> Vec<u8> {
 
     res
 }
+
+
+fn chrom_len(chrom: &str, fa: &mut fasta::IndexedReader<File>) -> u64 {
+    for s in fa.index.sequences() {
+        if s.name == chrom {
+            return s.len;
+        }
+    }
+    0
+}
+
 
 pub fn useful_rec(haps: &VariantHaps, rec: &bam::Record) -> Result<bool, Error> {
     // filter alignments to ensure that they truly overlap the region of interest
@@ -141,24 +163,6 @@ pub fn evaluate_alns(bam: &mut bam::IndexedReader, haps: &VariantHaps, cell_barc
     }
 
     Ok(scores)
-}
-
-
-#[derive(PartialEq, Eq, Ord, PartialOrd, Hash, Debug, Deserialize, Clone)]
-pub struct Locus {
-    pub chrom: String,
-    pub start: u32,
-    pub end: u32,
-}
-
-
-fn chrom_len(chrom: &str, fa: &mut fasta::IndexedReader<File>) -> u64 {
-    for s in fa.index.sequences() {
-        if s.name == chrom {
-            return s.len;
-        }
-    }
-    0
 }
 
 
