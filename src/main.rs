@@ -75,6 +75,19 @@ pub fn rc_seq(vec: &Vec<u8>) -> Vec<u8> {
     res
 }
 
+pub fn useful_rec(haps: &VariantHaps, rec: &bam::Record) -> Result<bool, Error> {
+    // filter alignments to ensure that they truly overlap the region of interest
+    // for now, overlap will be defined as having an aligned base anywhere in the locus
+        let cigar = rec.cigar();
+        for i in haps.locus.start..=haps.locus.end {
+            let t = cigar.read_pos(i, false, true)?;
+            if t.is_some() {
+                return Ok(true)
+            }
+        }
+        Ok(false)
+}
+
 
 pub fn evaluate_alns(bam: &mut bam::IndexedReader, haps: &VariantHaps, cell_barcodes: &HashSet<Vec<u8>>) -> Result<Vec<(String, i32, i32)>, Error>  {
 
@@ -89,6 +102,11 @@ pub fn evaluate_alns(bam: &mut bam::IndexedReader, haps: &VariantHaps, cell_barc
 
     for _rec in bam.records() {
         let rec = _rec?;
+
+        let is_useful = useful_rec(haps, &rec).unwrap();
+        if is_useful == false {
+            continue;
+        }
 
         let cb = get_cell_barcode(&rec);
         if cb.is_none() {
