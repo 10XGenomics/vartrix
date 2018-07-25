@@ -20,10 +20,8 @@ use failure::Error;
 use std::path::Path;
 use std::io::{BufRead, BufReader};
 
-/// Load a (possibly gzipped) barcode whitelist file.
-/// Each line in the file is a single whitelist barcode.
-/// Barcodes are numbers starting at 1.
-pub fn load_barcode_whitelist(filename: impl AsRef<Path>) -> Result<HashSet<Vec<u8>>, Error> {
+
+pub fn load_barcodes(filename: impl AsRef<Path>) -> Result<HashSet<Vec<u8>>, Error> {
     let r = File::open(filename.as_ref())?;
     let reader = BufReader::with_capacity(32 * 1024, r);
 
@@ -110,7 +108,7 @@ pub fn evaluate_alns(bam: &mut bam::IndexedReader, haps: &VariantHaps, cell_barc
             &rev
         };
 
-        println!("fwd: {}\nrev: {}", String::from_utf8_lossy(&fwd), String::from_utf8_lossy(&rev));
+        //println!("fwd: {}\nrev: {}", String::from_utf8_lossy(&fwd), String::from_utf8_lossy(&rev));
 
         let score = |a: u8, b: u8| if a == b {1i32} else {-5i32};
         let k = 6;  // kmer match length
@@ -131,36 +129,6 @@ pub fn evaluate_alns(bam: &mut bam::IndexedReader, haps: &VariantHaps, cell_barc
 
     Ok(scores)
 }
-
-/*
-def evaluate_alns(bam, chrom, pos, ref_aln, alt_aln, cell_barcodes, min_len=25, min_score=25):
-    """
-    Perform SSW for a given variant
-    Returns a list of lists [cell_barcode, ref_score, alt_score] for each read that overlaps
-    the variant.
-    """
-    scores = []
-    # because truncate is True, and the interval in consideration is 1bp, the reality is that this loop only executes once
-    # but because of how pysam works, this is how it must be done
-    for r in bam.pileup(chrom, pos, pos + 1, truncate=True):
-        # using is_refskip makes RNA-seq BAMs go much, much faster BUT it also
-        # leads to relevant reads being lost if the variant is near a splice junction
-        # this is because it checks for N operations anywhere in the read instead of
-        # an N operation overlapping this specific position
-        #alns = [x for x in r.pileups if not x.is_refskip and x.alignment.has_tag('CB') and x.alignment.get_tag('CB') in cell_barcodes]
-        # you have to load all of the reads at once because of how pysam pileup performs lazy loading 
-        # (similar to itertools groupby)
-        alns = [x for x in r.pileups if x.alignment.has_tag('CB') and x.alignment.get_tag('CB') in cell_barcodes]
-        for a in alns:
-            read = a.alignment
-            ref = ref_aln.align(read.seq, min_score=min_score, min_len=min_len)
-            alt = alt_aln.align(read.seq, min_score=min_score, min_len=min_len)
-            ref_score = ref.score if ref else 0
-            alt_score = alt.score if alt else 0
-            logging.debug('ref score {} alt score {} for read {} and cb {}'.format(ref_score, alt_score, read.qname, read.get_tag('CB')))
-            scores.append([read.get_tag('CB'), ref_score, alt_score])
-    return scores
-*/
 
 
 #[derive(PartialEq, Eq, Ord, PartialOrd, Hash, Debug, Deserialize, Clone)]
@@ -235,12 +203,11 @@ mod test {
     // read vcf file
     #[test]
     pub fn read_vcf() {
-        let mut fa = fasta::IndexedReader::from_file(&"../../refdata/genome.fa").unwrap();
+        let mut fa = fasta::IndexedReader::from_file(&"../hg19-2.0.0.fa").unwrap();
         let mut rdr = bcf::Reader::from_path("test/test.vcf").unwrap();
         let mut bam = bam::IndexedReader::from_path("test/test.bam").unwrap();
 
-        let cell_barcodes = load_barcode_whitelist("test/barcode_subset.tsv").unwrap();
-
+        let cell_barcodes = load_barcodes("test/barcode_subset.tsv").unwrap();
         for _rec in rdr.records() {
             let rec = _rec.unwrap();
             let chr = String::from_utf8(rec.header().rid2name(rec.rid().unwrap()).to_vec()).unwrap();
