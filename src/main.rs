@@ -41,7 +41,7 @@ pub struct VariantHaps {
 }
 
 
-pub fn load_barcodes(filename: impl AsRef<Path>) -> Result<HashMap<Vec<u8>, usize>, Error> {
+pub fn load_barcodes(filename: impl AsRef<Path>) -> Result<HashMap<Vec<u8>, u8>, Error> {
     let r = File::open(filename.as_ref())?;
     let reader = BufReader::with_capacity(32 * 1024, r);
 
@@ -49,7 +49,7 @@ pub fn load_barcodes(filename: impl AsRef<Path>) -> Result<HashMap<Vec<u8>, usiz
 
     for (i, l) in reader.lines().enumerate() {
         let seq = l?.into_bytes();
-        bc_set.insert(seq, i);
+        bc_set.insert(seq, i as u8);
     }
 
     Ok(bc_set)
@@ -111,7 +111,7 @@ pub fn useful_rec(haps: &VariantHaps, rec: &bam::Record) -> Result<bool, Error> 
 }
 
 
-pub fn evaluate_alns(bam: &mut bam::IndexedReader, haps: &VariantHaps, cell_barcodes: &HashMap<Vec<u8>, usize>) -> Result<Vec<(String, i32, i32)>, Error>  {
+pub fn evaluate_alns(bam: &mut bam::IndexedReader, haps: &VariantHaps, cell_barcodes: &HashMap<Vec<u8>, u8>) -> Result<Vec<(Vec<u8>, i32, i32)>, Error>  {
     let tid = bam.header().tid(haps.locus.chrom.as_bytes()).unwrap();
 
     bam.fetch(tid, haps.locus.start, haps.locus.end)?;
@@ -159,7 +159,8 @@ pub fn evaluate_alns(bam: &mut bam::IndexedReader, haps: &VariantHaps, cell_barc
         //let prt = alt_alignment.pretty(seq, &haps.alt);
         //print!("{}", prt);
 
-        scores.push((String::from_utf8(cb).unwrap(), ref_alignment.score, alt_alignment.score))
+        //scores.push((String::from_utf8(cb).unwrap(), ref_alignment.score, alt_alignment.score))
+        scores.push((cb, ref_alignment.score, alt_alignment.score))
     }
 
     Ok(scores)
@@ -210,13 +211,13 @@ pub fn construct_haplotypes(fa: &mut fasta::IndexedReader<File>, locus: &Locus, 
 }
 
 
-pub fn binary_scoring(scores: &Vec<(std::string::String, i32, i32)>) -> Vec<(&String, u8)> {
+pub fn binary_scoring(scores: &Vec<(Vec<u8>, i32, i32)>) -> Vec<(&Vec<u8>, u8)> {
     let min_score = 25;
     let mut parsed_scores = HashMap::new();
     for (bc, ref_score, alt_score) in scores.into_iter() {
         if (ref_score < &min_score) & (alt_score < &min_score) {
             continue;
-        } else if ref_score == alt_score{
+        } else if ref_score == alt_score {
             continue;
         }
         
@@ -271,17 +272,10 @@ mod test {
             let chr_fa = "chr".to_string() + &chr;
 
             let alleles = rec.alleles();
-            //println!("chrom: {:#?}, pos:{}, ref:{:#?}, alt:{:#?}", 
-            //    chr, 
-            //    rec.pos(), 
-            //    String::from_utf8_lossy(alleles[0]), 
-            //    String::from_utf8_lossy(alleles[1]));
 
             let locus = Locus { chrom: chr_fa.to_string(), start: rec.pos(), end: rec.pos() + alleles[0].len() as u32 };
 
             let (rref, alt) = construct_haplotypes(&mut fa, &locus, alleles[1], 75);
-            //println!("ref: {:?}", String::from_utf8_lossy(&rref));
-            //println!("alt: {:?}", String::from_utf8_lossy(&alt));
 
             let haps = VariantHaps {
                 locus: Locus { chrom: chr, start: locus.start, end: locus.end },
@@ -290,11 +284,18 @@ mod test {
             };
 
             let scores = evaluate_alns(&mut bam, &haps, &cell_barcodes).unwrap();
-            //println!("scores: {:?}", scores);
+
             let result = binary_scoring(&scores);
             for (bc, r) in result {
-                println!("result: {} {}", bc, r);
+                let i = cell_barcodes.get(&bc.clone());
+                //println!("{}", String::from_utf8_lossy(&bc)); // works
+                //println!("wtf: {}", String::from_utf8_lossy(&bc.as_bytes()));
+                //let i = cell_barcodes.get(&String::from_utf8_lossy(&bc.as_bytes()));
+                println!("result: {} {} {}", String::from_utf8_lossy(&bc), r, i.unwrap());
+                //println!("result: {} {}", String::from_utf8_lossy(bc), r);
             }
         }
     }
 }
+
+
