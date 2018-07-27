@@ -1,16 +1,17 @@
 extern crate bio;
 extern crate rust_htslib;
-extern crate docopt;
+extern crate clap;
 extern crate csv;
 extern crate serde;
 extern crate failure;
+extern crate sprs;
 
 use std::cmp::{max, min};
 
 #[macro_use]
 extern crate serde_derive;
-
 use std::collections::{HashMap, HashSet};
+use clap::{Arg, App};
 use std::fs::File;
 use bio::io::fasta;
 use bio::alignment::pairwise::banded;
@@ -19,10 +20,92 @@ use rust_htslib::bam::record::Aux;
 use failure::Error;
 use std::path::Path;
 use std::io::{BufRead, BufReader};
+use sprs::io::write_matrix_market;
+use sprs::TriMat;
+use rust_htslib::bcf;
 
 
 fn main() {
-    println!("Hello, world!");
+    use rust_htslib::bcf::Read; //bring BCF Read into scope
+
+    let args = App::new("vartrix")
+        .version("0.1")
+        .author("Ian Fiddes <ian.fiddes@10xgenomics.com>")
+        .about("Variant assignment for single cell genomics")
+        .arg(Arg::with_name("vcf")
+             .short("v")
+             .long("vcf")
+             .value_name("FILE")
+             .help("Called variant file (VCF)"))
+        .arg(Arg::with_name("bam")
+             .short("b")
+             .long("bam")
+             .value_name("FILE")
+             .help("Cellranger BAM file"))
+        .arg(Arg::with_name("fasta")
+             .short("f")
+             .long("fasta")
+             .value_name("FILE")
+             .help("Genome fasta file"))
+        .arg(Arg::with_name("cell_barcodes")
+             .short("c")
+             .long("cell-barcodes")
+             .value_name("FILE")
+             .help("File with cell barcodes to be evaluated"))
+        .arg(Arg::with_name("out_matrix")
+             .short("o")
+             .long("out-matrix")
+             .value_name("OUTPUT_FILE")
+             .help("Output Matrix Market file (.mtx)"))
+        .get_matches();
+
+    let fasta_file = args.value_of("fasta").unwrap();
+    let vcf_file = args.value_of("vcf").unwrap();
+    let bam_file = args.value_of("bam").unwrap();
+    let cell_barcodes = args.value_of("cell_barcodes").unwrap();
+    let out_matrix = args.value_of("out_matrix").unwrap();
+
+    let mut fa = fasta::IndexedReader::from_file(&fasta_file).unwrap();
+    let mut rdr = bcf::Reader::from_path(&vcf_file).unwrap();
+    let mut bam = bam::IndexedReader::from_path(&bam_file).unwrap();
+    let cell_barcodes = load_barcodes(&cell_barcodes).unwrap();
+
+    // need to figure out how big to make the matrix, so just read the number of lines in the VCF
+    let mut num_vars = 0;
+    for (_j, _rec) in rdr.records().enumerate() {
+        num_vars += 1;
+    }
+
+    let mut matrix = TriMat::new((num_vars, cell_barcodes.len()));
+
+    let mut rdr = bcf::Reader::from_path(&vcf_file).unwrap();
+
+    for (j, _rec) in rdr.records().enumerate() {
+        let rec = _rec.unwrap();
+        let chr = String::from_utf8(rec.header().rid2name(rec.rid().unwrap()).to_vec()).unwrap();
+        let chr_fa = "chr".to_string() + &chr;
+
+        let alleles = rec.alleles();
+
+        let locus = Locus { chrom: chr_fa.to_string(), start: rec.pos(), end: rec.pos() + alleles[0].len() as u32 };
+
+        let (rref, alt) = construct_haplotypes(&mut fa, &locus, alleles[1], 75);
+
+        let haps = VariantHaps {
+            locus: Locus { chrom: chr, start: locus.start, end: locus.end },
+            rref,
+            alt
+        };
+
+        let scores = evaluate_alns(&mut bam, &haps, &cell_barcodes).unwrap();
+        let result = binary_scoring(&scores);
+
+        for (bc, r) in result {
+            let i = cell_barcodes.get(bc).unwrap();
+            matrix.add_triplet(j, *i as usize, r);
+        }
+    }
+    let _ = write_matrix_market(&out_matrix, &matrix);
 }
 
 
@@ -87,7 +170,7 @@ pub fn rc_seq(vec: &Vec<u8>) -> Vec<u8> {
 }
 
 
-fn chrom_len(chrom: &str, fa: &mut fasta::IndexedReader<File>) -> u64 {
+pub fn chrom_len(chrom: &str, fa: &mut fasta::IndexedReader<File>) -> u64 {
     for s in fa.index.sequences() {
         if s.name == chrom {
             return s.len;
@@ -227,22 +310,22 @@ pub fn binary_scoring(scores: &Vec<(Vec<u8>, i32, i32)>) -> Vec<(&Vec<u8>, u8)> 
         
         if ref_score > alt_score {
             let mut t = HashSet::new();
-            t.insert(0);
+            t.insert(1);
             parsed_scores.insert(bc, t);
         } else if alt_score > ref_score {
             let mut t = HashSet::new();
-            t.insert(1);
+            t.insert(2);
             parsed_scores.insert(bc, t);
         }
     }
 
     let mut result = Vec::new();
     for (bc, r) in parsed_scores.into_iter() {
-        if r.contains(&1) {
-            result.push((bc, 1 as u8));
+        if r.contains(&2) {
+            result.push((bc, 2 as u8));
         }
-        else if r.contains(&0) {
-            result.push((bc, 0 as u8));
+        else if r.contains(&1) {
+            result.push((bc, 1 as u8));
         }
     }
     result
@@ -266,7 +349,17 @@ mod test {
         let mut bam = bam::IndexedReader::from_path("test/test.bam").unwrap();
         let cell_barcodes = load_barcodes("test/barcode_subset.tsv").unwrap();
 
-        for _rec in rdr.records() {
+        // need to figure out how big to make the matrix, so just read the number of lines in the VCF
+        let mut num_vars = 0;
+        for (j, _rec) in rdr.records().enumerate() {
+            num_vars += 1;
+        }
+
+        let mut matrix = TriMat::new((num_vars, cell_barcodes.len()));
+
+        let mut rdr = bcf::Reader::from_path("test/test.vcf").unwrap();
+
+        for (j, _rec) in rdr.records().enumerate() {
             let rec = _rec.unwrap();
             let chr = String::from_utf8(rec.header().rid2name(rec.rid().unwrap()).to_vec()).unwrap();
             let chr_fa = "chr".to_string() + &chr;
@@ -284,18 +377,13 @@ mod test {
             };
 
             let scores = evaluate_alns(&mut bam, &haps, &cell_barcodes).unwrap();
-
             let result = binary_scoring(&scores);
+
             for (bc, r) in result {
-                let i = cell_barcodes.get(&bc.clone());
-                //println!("{}", String::from_utf8_lossy(&bc)); // works
-                //println!("wtf: {}", String::from_utf8_lossy(&bc.as_bytes()));
-                //let i = cell_barcodes.get(&String::from_utf8_lossy(&bc.as_bytes()));
-                println!("result: {} {} {}", String::from_utf8_lossy(&bc), r, i.unwrap());
-                //println!("result: {} {}", String::from_utf8_lossy(bc), r);
+                let i = cell_barcodes.get(bc).unwrap();
+                matrix.add_triplet(j, *i as usize, r);
             }
         }
+        write_matrix_market(&"test.mtx", &matrix);
     }
 }
-
-
