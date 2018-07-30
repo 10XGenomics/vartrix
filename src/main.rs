@@ -62,6 +62,12 @@ fn main() {
              .value_name("OUTPUT_FILE")
              .help("Output Matrix Market file (.mtx)")
              .required(true))
+        .arg(Arg::with_name("padding")
+             .short("p")
+             .long("padding")
+             .value_name("INTEGER")
+             .default_value("100")
+             .help("Number of padding to use on both sides of the variant. Should be at least 1/2 of read length"))
         .get_matches();
 
     let fasta_file = args.value_of("fasta").expect("You must supply a fasta file");
@@ -69,6 +75,7 @@ fn main() {
     let bam_file = args.value_of("bam").expect("You must provide a BAM file");
     let cell_barcodes = args.value_of("cell_barcodes").expect("You must provide a cell barcodes file");
     let out_matrix = args.value_of("out_matrix").expect("You must provide a path to write the out matrix");
+    let padding = args.value_of("padding").unwrap_or_default().parse::<u32>().expect("Failed to convert padding to integer");
 
     let mut fa = fasta::IndexedReader::from_file(&fasta_file).unwrap();
     let mut rdr = bcf::Reader::from_path(&vcf_file).unwrap();
@@ -80,9 +87,9 @@ fn main() {
 
     let mut matrix = TriMat::new((num_vars, cell_barcodes.len()));
 
-    //let mut rdr = bcf::Reader::from_path(&vcf_file).unwrap();
+    let mut rdr = bcf::Reader::from_path(&vcf_file).unwrap();
 
-    for (j, _rec) in rdr.records().enumerate() {
+    for (_j, _rec) in rdr.records().enumerate() {
         let rec = _rec.unwrap();
         let chr = String::from_utf8(rec.header().rid2name(rec.rid().unwrap()).to_vec()).unwrap();
 
@@ -90,7 +97,7 @@ fn main() {
 
         let locus = Locus { chrom: chr.to_string(), start: rec.pos(), end: rec.pos() + alleles[0].len() as u32 };
 
-        let (rref, alt) = construct_haplotypes(&mut fa, &locus, alleles[1], 75);
+        let (rref, alt) = construct_haplotypes(&mut fa, &locus, alleles[1], padding);
 
         let haps = VariantHaps {
             locus: Locus { chrom: chr, start: locus.start, end: locus.end },
@@ -103,7 +110,7 @@ fn main() {
 
         for (bc, r) in result {
             let i = cell_barcodes.get(bc).unwrap();
-            matrix.add_triplet(j, *i as usize, r);
+            matrix.add_triplet(_j, *i as usize, r);
         }
     }
     let _ = write_matrix_market(&out_matrix, &matrix).unwrap();
@@ -284,7 +291,7 @@ pub fn construct_haplotypes(fa: &mut fasta::IndexedReader<File>, locus: &Locus, 
         };
 
         let mut alt_hap = Vec::new();
-        alt_hap.extend(get_range(locus.start.saturating_sub(padding as u32), locus.start));
+        alt_hap.extend(get_range(locus.start.saturating_sub(padding), locus.start));
         alt_hap.extend(alt);
         alt_hap.extend(get_range(locus.end, min(locus.end + padding, chrom_len as u32)));
         alt_hap
@@ -330,61 +337,4 @@ pub fn binary_scoring(scores: &Vec<(Vec<u8>, i32, i32)>) -> Vec<(&Vec<u8>, u8)> 
         }
     }
     result
-}
-
-
-#[cfg(test)]
-mod test {
-    use super::*;
-    use rust_htslib::bam;
-    use rust_htslib::bcf;
-    use rust_htslib::bcf::Read;
-    use bio::io::fasta;
-    
-
-    // read vcf file
-    #[test]
-    pub fn read_vcf() {
-        let mut fa = fasta::IndexedReader::from_file(&"../hg19-2.0.0.fa").unwrap();
-        let mut rdr = bcf::Reader::from_path("test/test.vcf").unwrap();
-        let mut bam = bam::IndexedReader::from_path("test/test.bam").unwrap();
-        let cell_barcodes = load_barcodes("test/barcode_subset.tsv").unwrap();
-
-        // need to figure out how big to make the matrix, so just read the number of lines in the VCF
-        let mut num_vars = 0;
-        for (j, _rec) in rdr.records().enumerate() {
-            num_vars += 1;
-        }
-
-        let mut matrix = TriMat::new((num_vars, cell_barcodes.len()));
-
-        let mut rdr = bcf::Reader::from_path("test/test.vcf").unwrap();
-
-        for (j, _rec) in rdr.records().enumerate() {
-            let rec = _rec.unwrap();
-            let chr = String::from_utf8(rec.header().rid2name(rec.rid().unwrap()).to_vec()).unwrap();
-            let chr_fa = "chr".to_string() + &chr;
-
-            let alleles = rec.alleles();
-
-            let locus = Locus { chrom: chr_fa.to_string(), start: rec.pos(), end: rec.pos() + alleles[0].len() as u32 };
-
-            let (rref, alt) = construct_haplotypes(&mut fa, &locus, alleles[1], 75);
-
-            let haps = VariantHaps {
-                locus: Locus { chrom: chr, start: locus.start, end: locus.end },
-                rref,
-                alt
-            };
-
-            let scores = evaluate_alns(&mut bam, &haps, &cell_barcodes).unwrap();
-            let result = binary_scoring(&scores);
-
-            for (bc, r) in result {
-                let i = cell_barcodes.get(bc).unwrap();
-                matrix.add_triplet(j, *i as usize, r);
-            }
-        }
-        write_matrix_market(&"test.mtx", &matrix);
-    }
 }
