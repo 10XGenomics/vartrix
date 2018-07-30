@@ -108,8 +108,7 @@ fn main() {
         let scores = evaluate_alns(&mut bam, &haps, &cell_barcodes).unwrap();
         let result = binary_scoring(&scores);
 
-        for (bc, r) in result {
-            let i = cell_barcodes.get(bc).unwrap();
+        for (i, r) in result {
             matrix.add_triplet(_j, *i as usize, r);
         }
     }
@@ -147,9 +146,13 @@ pub fn load_barcodes(filename: impl AsRef<Path>) -> Result<HashMap<Vec<u8>, u32>
 }
 
 
-pub fn get_cell_barcode(rec: &Record) -> Option<Vec<u8>> {
+pub fn get_cell_barcode(rec: &Record, cell_barcodes: &HashMap<Vec<u8>, u32>) -> Option<u32> {
     match rec.aux(b"CB") {
-        Some(Aux::String(hp)) => Some(hp.to_vec()),
+        Some(Aux::String(hp)) => {
+            let cb = hp.to_vec();
+            let cb_index = cell_barcodes.get(&cb);
+            Some(*cb_index?)
+        },
         _ => None,
     }
 }
@@ -202,7 +205,7 @@ pub fn useful_rec(haps: &VariantHaps, rec: &bam::Record) -> Result<bool, Error> 
 }
 
 
-pub fn evaluate_alns(bam: &mut bam::IndexedReader, haps: &VariantHaps, cell_barcodes: &HashMap<Vec<u8>, u32>) -> Result<Vec<(Vec<u8>, i32, i32)>, Error>  {
+pub fn evaluate_alns(bam: &mut bam::IndexedReader, haps: &VariantHaps, cell_barcodes: &HashMap<Vec<u8>, u32>) -> Result<Vec<(u32, i32, i32)>, Error>  {
     let tid = bam.header().tid(haps.locus.chrom.as_bytes()).unwrap();
 
     bam.fetch(tid, haps.locus.start, haps.locus.end)?;
@@ -216,15 +219,11 @@ pub fn evaluate_alns(bam: &mut bam::IndexedReader, haps: &VariantHaps, cell_barc
             continue;
         }
 
-        let cb = get_cell_barcode(&rec);
-        if cb.is_none() {
+        let cell_index = get_cell_barcode(&rec, cell_barcodes);
+        if cell_index.is_none() {
             continue;
         }
-
-        let cb = cb.unwrap();
-        if !cell_barcodes.contains_key(&cb) {
-            continue
-        }
+        let cell_index = cell_index.unwrap();
 
         let fwd = rec.seq().as_bytes();
         let rev = rc_seq(&fwd);
@@ -249,9 +248,7 @@ pub fn evaluate_alns(bam: &mut bam::IndexedReader, haps: &VariantHaps, cell_barc
 
         //let prt = alt_alignment.pretty(seq, &haps.alt);
         //print!("{}", prt);
-
-        //scores.push((String::from_utf8(cb).unwrap(), ref_alignment.score, alt_alignment.score))
-        scores.push((cb, ref_alignment.score, alt_alignment.score))
+        scores.push((cell_index, ref_alignment.score, alt_alignment.score))
     }
 
     Ok(scores)
@@ -302,7 +299,7 @@ pub fn construct_haplotypes(fa: &mut fasta::IndexedReader<File>, locus: &Locus, 
 }
 
 
-pub fn binary_scoring(scores: &Vec<(Vec<u8>, i32, i32)>) -> Vec<(&Vec<u8>, u8)> {
+pub fn binary_scoring(scores: &Vec<(u32, i32, i32)>) -> Vec<(&u32, u8)> {
     let min_score = 25;
     let mut parsed_scores = HashMap::new();
     for (bc, ref_score, alt_score) in scores.into_iter() {
