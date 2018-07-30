@@ -24,6 +24,9 @@ use sprs::io::write_matrix_market;
 use sprs::TriMat;
 use rust_htslib::bcf;
 
+const REF_VALUE: i8 = 1;
+const ALT_VALUE: i8 = 2;
+
 
 fn main() {
     use rust_htslib::bcf::Read; //bring BCF Read into scope
@@ -309,28 +312,20 @@ pub fn binary_scoring(scores: &Vec<(u32, i32, i32)>) -> Vec<(&u32, u8)> {
             continue;
         }
         
-        if !parsed_scores.contains_key(bc) {
-            parsed_scores.insert(bc, HashSet::new());
-        }
-        
         if ref_score > alt_score {
-            let mut t = HashSet::new();
-            t.insert(1);
-            parsed_scores.insert(bc, t);
+            parsed_scores.entry(bc).or_insert(Vec::new()).push(&REF_VALUE);
         } else if alt_score > ref_score {
-            let mut t = HashSet::new();
-            t.insert(2);
-            parsed_scores.insert(bc, t);
+            parsed_scores.entry(bc).or_insert(Vec::new()).push(&ALT_VALUE);
         }
     }
 
     let mut result = Vec::new();
     for (bc, r) in parsed_scores.into_iter() {
-        if r.contains(&2) {
-            result.push((bc, 2 as u8));
+        if r.contains(&&ALT_VALUE) {
+            result.push((bc, ALT_VALUE));
         }
-        else if r.contains(&1) {
-            result.push((bc, 1 as u8));
+        else if r.contains(&&REF_VALUE) {
+            result.push((bc, REF_VALUE));
         }
     }
     result
