@@ -14,6 +14,7 @@ extern crate failure;
 use std::collections::HashMap;
 use clap::{Arg, App};
 use std::fs::File;
+use std::io::prelude::*;
 use bio::io::fasta;
 use bio::alignment::pairwise::banded;
 use rust_htslib::bam::{self, Read, Record};
@@ -66,6 +67,10 @@ fn main() {
              .value_name("OUTPUT_FILE")
              .help("Output Matrix Market file (.mtx)")
              .required(true))
+        .arg(Arg::with_name("out_variants")
+             .long("out-variants")
+             .value_name("OUTPUT_FILE")
+             .help("Output variant file. Reports ordered list of variants to help with loading into downstream tools"))
         .arg(Arg::with_name("padding")
              .short("p")
              .long("padding")
@@ -79,7 +84,10 @@ fn main() {
     let bam_file = args.value_of("bam").expect("You must provide a BAM file");
     let cell_barcodes = args.value_of("cell_barcodes").expect("You must provide a cell barcodes file");
     let out_matrix = args.value_of("out_matrix").expect("You must provide a path to write the out matrix");
-    let padding = args.value_of("padding").unwrap_or_default().parse::<u32>().expect("Failed to convert padding to integer");
+    let padding = args.value_of("padding")
+                      .unwrap_or_default()
+                      .parse::<u32>()
+                      .expect("Failed to convert padding to integer");
 
     let mut fa = fasta::IndexedReader::from_file(&fasta_file).unwrap();
     let mut rdr = bcf::Reader::from_path(&vcf_file).unwrap();
@@ -99,7 +107,9 @@ fn main() {
 
         let alleles = rec.alleles();
 
-        let locus = Locus { chrom: chr.to_string(), start: rec.pos(), end: rec.pos() + alleles[0].len() as u32 };
+        let locus = Locus { chrom: chr.to_string(), 
+                            start: rec.pos(), 
+                            end: rec.pos() + alleles[0].len() as u32 };
 
         let (rref, alt) = construct_haplotypes(&mut fa, &locus, alleles[1], padding);
 
@@ -117,6 +127,11 @@ fn main() {
         }
     }
     let _ = write_matrix_market(&out_matrix, &matrix).unwrap();
+
+    if args.is_present("out_variants") {
+        let out_variants = args.value_of("out_variants").expect("Out variants path flag set but no value");
+        write_variants(out_variants, vcf_file);
+    }
 }
 
 
@@ -328,4 +343,20 @@ pub fn binary_scoring(scores: &Vec<(u32, i32, i32)>) -> Vec<(&u32, i8)> {
         }
     }
     result
+}
+
+
+pub fn write_variants(out_variants: &str, vcf_file: &str) {
+    // write the variants to a TSV file for easy loading into Seraut
+
+    use rust_htslib::bcf::Read; //bring BCF Read into scope
+    let mut rdr = bcf::Reader::from_path(&vcf_file).unwrap();
+    let mut of = File::create(out_variants).unwrap();
+    for _rec in rdr.records() {
+        let rec = _rec.unwrap();
+        let chr = String::from_utf8(rec.header().rid2name(rec.rid().unwrap()).to_vec()).unwrap();
+        let pos = rec.pos();
+        let line = format!("{}_{}\n", chr, pos).into_bytes();
+        let _ = of.write_all(&line).unwrap();
+    }
 }
