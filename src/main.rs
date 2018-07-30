@@ -64,11 +64,11 @@ fn main() {
              .required(true))
         .get_matches();
 
-    let fasta_file = args.value_of("fasta").unwrap();
-    let vcf_file = args.value_of("vcf").unwrap();
-    let bam_file = args.value_of("bam").unwrap();
-    let cell_barcodes = args.value_of("cell_barcodes").unwrap();
-    let out_matrix = args.value_of("out_matrix").unwrap();
+    let fasta_file = args.value_of("fasta").expect("You must supply a fasta file");
+    let vcf_file = args.value_of("vcf").expect("You must supply a VCF file");
+    let bam_file = args.value_of("bam").expect("You must provide a BAM file");
+    let cell_barcodes = args.value_of("cell_barcodes").expect("You must provide a cell barcodes file");
+    let out_matrix = args.value_of("out_matrix").expect("You must provide a path to write the out matrix");
 
     let mut fa = fasta::IndexedReader::from_file(&fasta_file).unwrap();
     let mut rdr = bcf::Reader::from_path(&vcf_file).unwrap();
@@ -76,23 +76,19 @@ fn main() {
     let cell_barcodes = load_barcodes(&cell_barcodes).unwrap();
 
     // need to figure out how big to make the matrix, so just read the number of lines in the VCF
-    let mut num_vars = 0;
-    for (_j, _rec) in rdr.records().enumerate() {
-        num_vars += 1;
-    }
+    let num_vars = rdr.records().count();
 
     let mut matrix = TriMat::new((num_vars, cell_barcodes.len()));
 
-    let mut rdr = bcf::Reader::from_path(&vcf_file).unwrap();
+    //let mut rdr = bcf::Reader::from_path(&vcf_file).unwrap();
 
     for (j, _rec) in rdr.records().enumerate() {
         let rec = _rec.unwrap();
         let chr = String::from_utf8(rec.header().rid2name(rec.rid().unwrap()).to_vec()).unwrap();
-        let chr_fa = "chr".to_string() + &chr;
 
         let alleles = rec.alleles();
 
-        let locus = Locus { chrom: chr_fa.to_string(), start: rec.pos(), end: rec.pos() + alleles[0].len() as u32 };
+        let locus = Locus { chrom: chr.to_string(), start: rec.pos(), end: rec.pos() + alleles[0].len() as u32 };
 
         let (rref, alt) = construct_haplotypes(&mut fa, &locus, alleles[1], 75);
 
@@ -110,7 +106,7 @@ fn main() {
             matrix.add_triplet(j, *i as usize, r);
         }
     }
-    let _ = write_matrix_market(&out_matrix, &matrix);
+    let _ = write_matrix_market(&out_matrix, &matrix).unwrap();
 }
 
 
@@ -129,7 +125,7 @@ pub struct VariantHaps {
 }
 
 
-pub fn load_barcodes(filename: impl AsRef<Path>) -> Result<HashMap<Vec<u8>, u8>, Error> {
+pub fn load_barcodes(filename: impl AsRef<Path>) -> Result<HashMap<Vec<u8>, u32>, Error> {
     let r = File::open(filename.as_ref())?;
     let reader = BufReader::with_capacity(32 * 1024, r);
 
@@ -137,7 +133,7 @@ pub fn load_barcodes(filename: impl AsRef<Path>) -> Result<HashMap<Vec<u8>, u8>,
 
     for (i, l) in reader.lines().enumerate() {
         let seq = l?.into_bytes();
-        bc_set.insert(seq, i as u8);
+        bc_set.insert(seq, i as u32);
     }
 
     Ok(bc_set)
@@ -199,7 +195,7 @@ pub fn useful_rec(haps: &VariantHaps, rec: &bam::Record) -> Result<bool, Error> 
 }
 
 
-pub fn evaluate_alns(bam: &mut bam::IndexedReader, haps: &VariantHaps, cell_barcodes: &HashMap<Vec<u8>, u8>) -> Result<Vec<(Vec<u8>, i32, i32)>, Error>  {
+pub fn evaluate_alns(bam: &mut bam::IndexedReader, haps: &VariantHaps, cell_barcodes: &HashMap<Vec<u8>, u32>) -> Result<Vec<(Vec<u8>, i32, i32)>, Error>  {
     let tid = bam.header().tid(haps.locus.chrom.as_bytes()).unwrap();
 
     bam.fetch(tid, haps.locus.start, haps.locus.end)?;
