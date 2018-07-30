@@ -3,14 +3,15 @@ extern crate rust_htslib;
 extern crate clap;
 extern crate csv;
 extern crate serde;
-extern crate failure;
 extern crate sprs;
 
 use std::cmp::{max, min};
 
 #[macro_use]
 extern crate serde_derive;
-use std::collections::{HashMap, HashSet};
+#[macro_use]
+extern crate failure;
+use std::collections::HashMap;
 use clap::{Arg, App};
 use std::fs::File;
 use bio::io::fasta;
@@ -179,18 +180,17 @@ pub fn rc_seq(vec: &Vec<u8>) -> Vec<u8> {
     for b in vec.iter().rev() {
         res.push(complement(*b));
     }
-
     res
 }
 
 
-pub fn chrom_len(chrom: &str, fa: &mut fasta::IndexedReader<File>) -> u64 {
+pub fn chrom_len(chrom: &str, fa: &mut fasta::IndexedReader<File>) -> Result<u64, Error> {
     for s in fa.index.sequences() {
         if s.name == chrom {
-            return s.len;
+            return Ok(s.len);
         }
     }
-    0
+    Err(format_err!("Requested chromosome {} was not found in fasta", chrom))
 }
 
 
@@ -208,7 +208,14 @@ pub fn useful_rec(haps: &VariantHaps, rec: &bam::Record) -> Result<bool, Error> 
 }
 
 
-pub fn evaluate_alns(bam: &mut bam::IndexedReader, haps: &VariantHaps, cell_barcodes: &HashMap<Vec<u8>, u32>) -> Result<Vec<(u32, i32, i32)>, Error>  {
+pub fn evaluate_alns(bam: &mut bam::IndexedReader, 
+                    haps: &VariantHaps, 
+                    cell_barcodes: &HashMap<Vec<u8>, u32>) 
+                        -> Result<Vec<(u32, i32, i32)>, Error> {
+    // loop over all alignments in the region of interest
+    // if the alignments are useful (aligned over this region)
+    // perform smith-waterman against both haplotypes
+    // and report the scores
     let tid = bam.header().tid(haps.locus.chrom.as_bytes()).unwrap();
 
     bam.fetch(tid, haps.locus.start, haps.locus.end)?;
@@ -236,8 +243,6 @@ pub fn evaluate_alns(bam: &mut bam::IndexedReader, haps: &VariantHaps, cell_barc
             &rev
         };
 
-        //println!("fwd: {}\nrev: {}", String::from_utf8_lossy(&fwd), String::from_utf8_lossy(&rev));
-
         let score = |a: u8, b: u8| if a == b {1i32} else {-5i32};
         let k = 6;  // kmer match length
         let w = 20;  // Window size for creating the band
@@ -245,12 +250,6 @@ pub fn evaluate_alns(bam: &mut bam::IndexedReader, haps: &VariantHaps, cell_barc
         let ref_alignment = aligner.local(seq, &haps.rref);
         let alt_alignment = aligner.local(seq, &haps.alt);
 
-        // Turn on this to pretty-print the alignments
-        //let prt = ref_alignment.pretty(seq, &haps.rref);
-        //print!("{}", prt);
-
-        //let prt = alt_alignment.pretty(seq, &haps.alt);
-        //print!("{}", prt);
         scores.push((cell_index, ref_alignment.score, alt_alignment.score))
     }
 
@@ -266,7 +265,7 @@ pub fn read_locus(fa: &mut fasta::IndexedReader<File>,
     let mut seq = Vec::new();
 
     let new_start = max(0, loc.start as i32 - pad_left as i32) as u64;
-    let new_end = u64::from(min(loc.end + pad_right, chrom_len(&loc.chrom, fa) as u32));
+    let new_end = u64::from(min(loc.end + pad_right, chrom_len(&loc.chrom, fa).unwrap() as u32));
 
     fa.fetch(&loc.chrom, new_start, new_end).unwrap();
     fa.read(&mut seq).unwrap();
@@ -281,7 +280,7 @@ pub fn read_locus(fa: &mut fasta::IndexedReader<File>,
 // Get padded ref and alt haplotypes around the variant. Locus must cover the REF bases of the VCF variant.
 pub fn construct_haplotypes(fa: &mut fasta::IndexedReader<File>, locus: &Locus, alt: &[u8], padding: u32) -> (Vec<u8>, Vec<u8>)
 {
-    let chrom_len = { chrom_len(&locus.chrom, fa) };
+    let chrom_len = chrom_len(&locus.chrom, fa).unwrap();
 
     let alt_hap = {
         let mut get_range = |s,e| {
@@ -302,7 +301,7 @@ pub fn construct_haplotypes(fa: &mut fasta::IndexedReader<File>, locus: &Locus, 
 }
 
 
-pub fn binary_scoring(scores: &Vec<(u32, i32, i32)>) -> Vec<(&u32, u8)> {
+pub fn binary_scoring(scores: &Vec<(u32, i32, i32)>) -> Vec<(&u32, i8)> {
     let min_score = 25;
     let mut parsed_scores = HashMap::new();
     for (bc, ref_score, alt_score) in scores.into_iter() {
