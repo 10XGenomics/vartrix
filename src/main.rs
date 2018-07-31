@@ -1,17 +1,20 @@
 extern crate bio;
 extern crate rust_htslib;
-extern crate docopt;
+extern crate clap;
 extern crate csv;
 extern crate serde;
-extern crate failure;
+extern crate sprs;
 
 use std::cmp::{max, min};
 
 #[macro_use]
 extern crate serde_derive;
-
-use std::collections::HashSet;
+#[macro_use]
+extern crate failure;
+use std::collections::HashMap;
+use clap::{Arg, App};
 use std::fs::File;
+use std::io::prelude::*;
 use bio::io::fasta;
 use bio::alignment::pairwise::banded;
 use rust_htslib::bam::{self, Read, Record};
@@ -19,28 +22,126 @@ use rust_htslib::bam::record::Aux;
 use failure::Error;
 use std::path::Path;
 use std::io::{BufRead, BufReader};
+use sprs::io::write_matrix_market;
+use sprs::TriMat;
+use rust_htslib::bcf;
 
-/// Load a (possibly gzipped) barcode whitelist file.
-/// Each line in the file is a single whitelist barcode.
-/// Barcodes are numbers starting at 1.
-pub fn load_barcode_whitelist(filename: impl AsRef<Path>) -> Result<HashSet<Vec<u8>>, Error> {
-    let r = File::open(filename.as_ref())?;
-    let reader = BufReader::with_capacity(32 * 1024, r);
-
-    let mut bc_set = HashSet::default();
-
-    for l in reader.lines() {
-        let seq = l?.into_bytes();
-        bc_set.insert(seq);
-    }
-
-    Ok(bc_set)
-}
+const REF_VALUE: i8 = 1;
+const ALT_VALUE: i8 = 2;
 
 
 fn main() {
-    println!("Hello, world!");
+    use rust_htslib::bcf::Read; //bring BCF Read into scope
+
+    let args = App::new("vartrix")
+        .version("0.1")
+        .author("Ian Fiddes <ian.fiddes@10xgenomics.com>")
+        .about("Variant assignment for single cell genomics")
+        .arg(Arg::with_name("vcf")
+             .short("v")
+             .long("vcf")
+             .value_name("FILE")
+             .help("Called variant file (VCF)")
+             .required(true))
+        .arg(Arg::with_name("bam")
+             .short("b")
+             .long("bam")
+             .value_name("FILE")
+             .help("Cellranger BAM file")
+             .required(true))
+        .arg(Arg::with_name("fasta")
+             .short("f")
+             .long("fasta")
+             .value_name("FILE")
+             .help("Genome fasta file")
+             .required(true))
+        .arg(Arg::with_name("cell_barcodes")
+             .short("c")
+             .long("cell-barcodes")
+             .value_name("FILE")
+             .help("File with cell barcodes to be evaluated")
+             .required(true))
+        .arg(Arg::with_name("out_matrix")
+             .short("o")
+             .long("out-matrix")
+             .value_name("OUTPUT_FILE")
+             .help("Output Matrix Market file (.mtx)")
+             .required(true))
+        .arg(Arg::with_name("out_variants")
+             .long("out-variants")
+             .value_name("OUTPUT_FILE")
+             .help("Output variant file. Reports ordered list of variants to help with loading into downstream tools"))
+        .arg(Arg::with_name("padding")
+             .short("p")
+             .long("padding")
+             .value_name("INTEGER")
+             .default_value("100")
+             .help("Number of padding to use on both sides of the variant. Should be at least 1/2 of read length"))
+        .get_matches();
+
+    let fasta_file = args.value_of("fasta").expect("You must supply a fasta file");
+    let vcf_file = args.value_of("vcf").expect("You must supply a VCF file");
+    let bam_file = args.value_of("bam").expect("You must provide a BAM file");
+    let cell_barcodes = args.value_of("cell_barcodes").expect("You must provide a cell barcodes file");
+    let out_matrix = args.value_of("out_matrix").expect("You must provide a path to write the out matrix");
+    let padding = args.value_of("padding")
+                      .unwrap_or_default()
+                      .parse::<u32>()
+                      .expect("Failed to convert padding to integer");
+
+    let mut fa = fasta::IndexedReader::from_file(&fasta_file).unwrap();
+    let mut rdr = bcf::Reader::from_path(&vcf_file).unwrap();
+    let mut bam = bam::IndexedReader::from_path(&bam_file).unwrap();
+    let cell_barcodes = load_barcodes(&cell_barcodes).unwrap();
+
+    // need to figure out how big to make the matrix, so just read the number of lines in the VCF
+    let num_vars = rdr.records().count();
+
+    let mut matrix = TriMat::new((num_vars, cell_barcodes.len()));
+
+    let mut rdr = bcf::Reader::from_path(&vcf_file).unwrap();
+
+    for (_j, _rec) in rdr.records().enumerate() {
+        let rec = _rec.unwrap();
+        let chr = String::from_utf8(rec.header().rid2name(rec.rid().unwrap()).to_vec()).unwrap();
+
+        let alleles = rec.alleles();
+
+        let locus = Locus { chrom: chr.to_string(), 
+                            start: rec.pos(), 
+                            end: rec.pos() + alleles[0].len() as u32 };
+
+        let (rref, alt) = construct_haplotypes(&mut fa, &locus, alleles[1], padding);
+
+        let haps = VariantHaps {
+            locus: Locus { chrom: chr, start: locus.start, end: locus.end },
+            rref,
+            alt
+        };
+
+        let scores = evaluate_alns(&mut bam, &haps, &cell_barcodes).unwrap();
+        let result = binary_scoring(&scores);
+
+        for (i, r) in result {
+            matrix.add_triplet(_j, *i as usize, r);
+        }
+    }
+    let _ = write_matrix_market(&out_matrix, &matrix).unwrap();
+
+    if args.is_present("out_variants") {
+        let out_variants = args.value_of("out_variants").expect("Out variants path flag set but no value");
+        write_variants(out_variants, vcf_file);
+    }
 }
+
+
+#[derive(PartialEq, Eq, Ord, PartialOrd, Hash, Debug, Deserialize, Clone)]
+pub struct Locus {
+    pub chrom: String,
+    pub start: u32,
+    pub end: u32,
+}
+
 
 pub struct VariantHaps {
     locus: Locus,
@@ -48,9 +149,29 @@ pub struct VariantHaps {
     alt: Vec<u8>,
 }
 
-pub fn get_cell_barcode(rec: &Record) -> Option<Vec<u8>> {
+
+pub fn load_barcodes(filename: impl AsRef<Path>) -> Result<HashMap<Vec<u8>, u32>, Error> {
+    let r = File::open(filename.as_ref())?;
+    let reader = BufReader::with_capacity(32 * 1024, r);
+
+    let mut bc_set = HashMap::new();
+
+    for (i, l) in reader.lines().enumerate() {
+        let seq = l?.into_bytes();
+        bc_set.insert(seq, i as u32);
+    }
+
+    Ok(bc_set)
+}
+
+
+pub fn get_cell_barcode(rec: &Record, cell_barcodes: &HashMap<Vec<u8>, u32>) -> Option<u32> {
     match rec.aux(b"CB") {
-        Some(Aux::String(hp)) => Some(hp.to_vec()),
+        Some(Aux::String(hp)) => {
+            let cb = hp.to_vec();
+            let cb_index = cell_barcodes.get(&cb);
+            Some(*cb_index?)
+        },
         _ => None,
     }
 }
@@ -67,23 +188,49 @@ pub fn complement(b: u8) -> u8 {
     }
 }
 
+
 pub fn rc_seq(vec: &Vec<u8>) -> Vec<u8> {
     let mut res = Vec::new();
 
     for b in vec.iter().rev() {
         res.push(complement(*b));
     }
-
     res
 }
 
 
-pub fn evaluate_alns(bam: &mut bam::IndexedReader, haps: &VariantHaps, cell_barcodes: &HashSet<Vec<u8>>) -> Result<Vec<(String, i32, i32)>, Error>  {
+pub fn chrom_len(chrom: &str, fa: &mut fasta::IndexedReader<File>) -> Result<u64, Error> {
+    for s in fa.index.sequences() {
+        if s.name == chrom {
+            return Ok(s.len);
+        }
+    }
+    Err(format_err!("Requested chromosome {} was not found in fasta", chrom))
+}
 
-    // Probably need some alignment filtering to handle very long ref-skip alignments that span the locus
-    //let min_len = 25;
-    //let min_score = 25;
 
+pub fn useful_rec(haps: &VariantHaps, rec: &bam::Record) -> Result<bool, Error> {
+    // filter alignments to ensure that they truly overlap the region of interest
+    // for now, overlap will be defined as having an aligned base anywhere in the locus
+        let cigar = rec.cigar();
+        for i in haps.locus.start..=haps.locus.end {
+            let t = cigar.read_pos(i, false, true)?;
+            if t.is_some() {
+                return Ok(true)
+            }
+        }
+        Ok(false)
+}
+
+
+pub fn evaluate_alns(bam: &mut bam::IndexedReader, 
+                    haps: &VariantHaps, 
+                    cell_barcodes: &HashMap<Vec<u8>, u32>) 
+                        -> Result<Vec<(u32, i32, i32)>, Error> {
+    // loop over all alignments in the region of interest
+    // if the alignments are useful (aligned over this region)
+    // perform smith-waterman against both haplotypes
+    // and report the scores
     let tid = bam.header().tid(haps.locus.chrom.as_bytes()).unwrap();
 
     bam.fetch(tid, haps.locus.start, haps.locus.end)?;
@@ -92,15 +239,16 @@ pub fn evaluate_alns(bam: &mut bam::IndexedReader, haps: &VariantHaps, cell_barc
     for _rec in bam.records() {
         let rec = _rec?;
 
-        let cb = get_cell_barcode(&rec);
-        if cb.is_none() {
+        let is_useful = useful_rec(haps, &rec).unwrap();
+        if is_useful == false {
             continue;
         }
 
-        let cb = cb.unwrap();
-        if !cell_barcodes.contains(&cb) {
-            continue
+        let cell_index = get_cell_barcode(&rec, cell_barcodes);
+        if cell_index.is_none() {
+            continue;
         }
+        let cell_index = cell_index.unwrap();
 
         let fwd = rec.seq().as_bytes();
         let rev = rc_seq(&fwd);
@@ -110,8 +258,6 @@ pub fn evaluate_alns(bam: &mut bam::IndexedReader, haps: &VariantHaps, cell_barc
             &rev
         };
 
-        println!("fwd: {}\nrev: {}", String::from_utf8_lossy(&fwd), String::from_utf8_lossy(&rev));
-
         let score = |a: u8, b: u8| if a == b {1i32} else {-5i32};
         let k = 6;  // kmer match length
         let w = 20;  // Window size for creating the band
@@ -119,66 +265,12 @@ pub fn evaluate_alns(bam: &mut bam::IndexedReader, haps: &VariantHaps, cell_barc
         let ref_alignment = aligner.local(seq, &haps.rref);
         let alt_alignment = aligner.local(seq, &haps.alt);
 
-        // Turn on this to pretty-print the alignments
-        //let prt = ref_alignment.pretty(seq, &haps.rref);
-        //print!("{}", prt);
-
-        //let prt = alt_alignment.pretty(seq, &haps.alt);
-        //print!("{}", prt);
-
-        scores.push((String::from_utf8(cb).unwrap(), ref_alignment.score, alt_alignment.score))
+        scores.push((cell_index, ref_alignment.score, alt_alignment.score))
     }
 
     Ok(scores)
 }
 
-/*
-def evaluate_alns(bam, chrom, pos, ref_aln, alt_aln, cell_barcodes, min_len=25, min_score=25):
-    """
-    Perform SSW for a given variant
-    Returns a list of lists [cell_barcode, ref_score, alt_score] for each read that overlaps
-    the variant.
-    """
-    scores = []
-    # because truncate is True, and the interval in consideration is 1bp, the reality is that this loop only executes once
-    # but because of how pysam works, this is how it must be done
-    for r in bam.pileup(chrom, pos, pos + 1, truncate=True):
-        # using is_refskip makes RNA-seq BAMs go much, much faster BUT it also
-        # leads to relevant reads being lost if the variant is near a splice junction
-        # this is because it checks for N operations anywhere in the read instead of
-        # an N operation overlapping this specific position
-        #alns = [x for x in r.pileups if not x.is_refskip and x.alignment.has_tag('CB') and x.alignment.get_tag('CB') in cell_barcodes]
-        # you have to load all of the reads at once because of how pysam pileup performs lazy loading 
-        # (similar to itertools groupby)
-        alns = [x for x in r.pileups if x.alignment.has_tag('CB') and x.alignment.get_tag('CB') in cell_barcodes]
-        for a in alns:
-            read = a.alignment
-            ref = ref_aln.align(read.seq, min_score=min_score, min_len=min_len)
-            alt = alt_aln.align(read.seq, min_score=min_score, min_len=min_len)
-            ref_score = ref.score if ref else 0
-            alt_score = alt.score if alt else 0
-            logging.debug('ref score {} alt score {} for read {} and cb {}'.format(ref_score, alt_score, read.qname, read.get_tag('CB')))
-            scores.append([read.get_tag('CB'), ref_score, alt_score])
-    return scores
-*/
-
-
-#[derive(PartialEq, Eq, Ord, PartialOrd, Hash, Debug, Deserialize, Clone)]
-pub struct Locus {
-    pub chrom: String,
-    pub start: u32,
-    pub end: u32,
-}
-
-
-fn chrom_len(chrom: &str, fa: &mut fasta::IndexedReader<File>) -> u64 {
-    for s in fa.index.sequences() {
-        if s.name == chrom {
-            return s.len;
-        }
-    }
-    0
-}
 
 pub fn read_locus(fa: &mut fasta::IndexedReader<File>,
                   loc: &Locus,
@@ -188,7 +280,7 @@ pub fn read_locus(fa: &mut fasta::IndexedReader<File>,
     let mut seq = Vec::new();
 
     let new_start = max(0, loc.start as i32 - pad_left as i32) as u64;
-    let new_end = u64::from(min(loc.end + pad_right, chrom_len(&loc.chrom, fa) as u32));
+    let new_end = u64::from(min(loc.end + pad_right, chrom_len(&loc.chrom, fa).unwrap() as u32));
 
     fa.fetch(&loc.chrom, new_start, new_end).unwrap();
     fa.read(&mut seq).unwrap();
@@ -199,10 +291,11 @@ pub fn read_locus(fa: &mut fasta::IndexedReader<File>,
     (new_slc.into_iter().collect(), new_start as usize)
 }
 
+
 // Get padded ref and alt haplotypes around the variant. Locus must cover the REF bases of the VCF variant.
 pub fn construct_haplotypes(fa: &mut fasta::IndexedReader<File>, locus: &Locus, alt: &[u8], padding: u32) -> (Vec<u8>, Vec<u8>)
 {
-    let chrom_len = { chrom_len(&locus.chrom, fa) };
+    let chrom_len = chrom_len(&locus.chrom, fa).unwrap();
 
     let alt_hap = {
         let mut get_range = |s,e| {
@@ -212,7 +305,7 @@ pub fn construct_haplotypes(fa: &mut fasta::IndexedReader<File>, locus: &Locus, 
         };
 
         let mut alt_hap = Vec::new();
-        alt_hap.extend(get_range(locus.start.saturating_sub(padding as u32), locus.start));
+        alt_hap.extend(get_range(locus.start.saturating_sub(padding), locus.start));
         alt_hap.extend(alt);
         alt_hap.extend(get_range(locus.end, min(locus.end + padding, chrom_len as u32)));
         alt_hap
@@ -223,50 +316,47 @@ pub fn construct_haplotypes(fa: &mut fasta::IndexedReader<File>, locus: &Locus, 
 }
 
 
-#[cfg(test)]
-mod test {
-    use super::*;
-    use rust_htslib::bam;
-    use rust_htslib::bcf;
-    use rust_htslib::bcf::Read;
-    use bio::io::fasta;
-    
-
-    // read vcf file
-    #[test]
-    pub fn read_vcf() {
-        let mut fa = fasta::IndexedReader::from_file(&"../../refdata/genome.fa").unwrap();
-        let mut rdr = bcf::Reader::from_path("test/test.vcf").unwrap();
-        let mut bam = bam::IndexedReader::from_path("test/test.bam").unwrap();
-
-        let cell_barcodes = load_barcode_whitelist("test/barcode_subset.tsv").unwrap();
-
-        for _rec in rdr.records() {
-            let rec = _rec.unwrap();
-            let chr = String::from_utf8(rec.header().rid2name(rec.rid().unwrap()).to_vec()).unwrap();
-            let chr_fa = "chr".to_string() + &chr;
-
-            let alleles = rec.alleles();
-            println!("chrom: {:#?}, pos:{}, ref:{:#?}, alt:{:#?}", 
-                chr, 
-                rec.pos(), 
-                String::from_utf8_lossy(alleles[0]), 
-                String::from_utf8_lossy(alleles[1]));
-
-            let locus = Locus { chrom: chr_fa.to_string(), start: rec.pos(), end: rec.pos() + alleles[0].len() as u32 };
-
-            let (rref, alt) = construct_haplotypes(&mut fa, &locus, alleles[1], 75);
-            println!("ref: {:?}", String::from_utf8_lossy(&rref));
-            println!("alt: {:?}", String::from_utf8_lossy(&alt));
-
-            let haps = VariantHaps {
-                locus: Locus { chrom: chr, start: locus.start, end: locus.end },
-                rref,
-                alt
-            };
-
-            let scores = evaluate_alns(&mut bam, &haps, &cell_barcodes).unwrap();
-            println!("scores: {:?}", scores);
+pub fn binary_scoring(scores: &Vec<(u32, i32, i32)>) -> Vec<(&u32, i8)> {
+    let min_score = 25;
+    let mut parsed_scores = HashMap::new();
+    for (bc, ref_score, alt_score) in scores.into_iter() {
+        if (ref_score < &min_score) & (alt_score < &min_score) {
+            continue;
+        } else if ref_score == alt_score {
+            continue;
         }
+        
+        if ref_score > alt_score {
+            parsed_scores.entry(bc).or_insert(Vec::new()).push(&REF_VALUE);
+        } else if alt_score > ref_score {
+            parsed_scores.entry(bc).or_insert(Vec::new()).push(&ALT_VALUE);
+        }
+    }
+
+    let mut result = Vec::new();
+    for (bc, r) in parsed_scores.into_iter() {
+        if r.contains(&&ALT_VALUE) {
+            result.push((bc, ALT_VALUE));
+        }
+        else if r.contains(&&REF_VALUE) {
+            result.push((bc, REF_VALUE));
+        }
+    }
+    result
+}
+
+
+pub fn write_variants(out_variants: &str, vcf_file: &str) {
+    // write the variants to a TSV file for easy loading into Seraut
+
+    use rust_htslib::bcf::Read; //bring BCF Read into scope
+    let mut rdr = bcf::Reader::from_path(&vcf_file).unwrap();
+    let mut of = File::create(out_variants).unwrap();
+    for _rec in rdr.records() {
+        let rec = _rec.unwrap();
+        let chr = String::from_utf8(rec.header().rid2name(rec.rid().unwrap()).to_vec()).unwrap();
+        let pos = rec.pos();
+        let line = format!("{}_{}\n", chr, pos).into_bytes();
+        let _ = of.write_all(&line).unwrap();
     }
 }
