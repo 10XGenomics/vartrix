@@ -99,16 +99,14 @@ Alt_frac will report the fraction of alt reads.".replace("\n", " ");
     let vcf_file = args.value_of("vcf").expect("You must supply a VCF file");
     let bam_file = args.value_of("bam").expect("You must provide a BAM file");
     let cell_barcodes = args.value_of("cell_barcodes").expect("You must provide a cell barcodes file");
-    let out_matrix = args.value_of("out_matrix").expect("You must provide a path to write the out matrix");
+    let out_matrix_path = args.value_of("out_matrix").expect("You must provide a path to write the out matrix");
+    let ref_matrix_path = args.value_of("ref_matrix").unwrap_or("rustyrustrust");
     let padding = args.value_of("padding")
                       .unwrap_or_default()
                       .parse::<u32>()
                       .expect("Failed to convert padding to integer");
     let scoring_method = args.value_of("scoring_method")
                              .unwrap_or_default();
-    if args.is_present("ref_matrix") {
-        let ref_matrix = args.value_of("ref_matrix").unwrap();
-    }
 
     let mut fa = fasta::IndexedReader::from_file(&fasta_file).unwrap();
     let mut rdr = bcf::Reader::from_path(&vcf_file).unwrap();
@@ -117,8 +115,8 @@ Alt_frac will report the fraction of alt reads.".replace("\n", " ");
 
     // need to figure out how big to make the matrix, so just read the number of lines in the VCF
     let num_vars = rdr.records().count();
-
     let mut matrix = TriMat::new((num_vars, cell_barcodes.len()));
+    let mut ref_matrix = TriMat::new((num_vars, cell_barcodes.len()));
 
     let mut rdr = bcf::Reader::from_path(&vcf_file).unwrap();
 
@@ -142,24 +140,37 @@ Alt_frac will report the fraction of alt reads.".replace("\n", " ");
 
         let scores = evaluate_alns(&mut bam, &haps, &cell_barcodes).unwrap();
 
-        enum Result {
-            af(Vec<(&'static u32, f64)>),
-            b(Vec<(&'static u32, i8)>),
-            c((Vec<(&'static u32, f64)>, Vec<(&'static u32, f64)>)),
+        match scoring_method {
+            "alt_frac" => {
+                let result = alt_frac(&scores);
+                for (i, r) in result {
+                    matrix.add_triplet(_j, *i as usize, r);
         }
-
-        let result = match scoring_method {
-            "alt_frac" => Result::af(alt_frac(&scores)),
-            "binary" => Result::b(binary_scoring(&scores)),
-            "coverage" => Result::c(coverage(&scores)),
-            &_ => panic!("Scoring method is invalid")
-        };
-
+            },
+            "binary" => {
+                let result = binary_scoring(&scores);
         for (i, r) in result {
             matrix.add_triplet(_j, *i as usize, r);
         }
+            },
+            "coverage" => {
+                let result = coverage(&scores);
+                for (i, r) in result.0 {
+                    matrix.add_triplet(_j, *i as usize, r);
+                }
+                for (i, r) in result.1 {
+                    ref_matrix.add_triplet(_j, *i as usize, r);
+                }
+            },
+            &_ => panic!("Scoring method is invalid")
+        };
     }
-    let _ = write_matrix_market(&out_matrix, &matrix).unwrap();
+    
+    let _ = write_matrix_market(&out_matrix_path, &matrix).unwrap();
+    
+    if args.is_present("ref_matrix") {
+        let _ = write_matrix_market(&ref_matrix_path as &str, &ref_matrix).unwrap();
+    }
 
     if args.is_present("out_variants") {
         let out_variants = args.value_of("out_variants").expect("Out variants path flag set but no value");
@@ -369,16 +380,16 @@ fn parse_scores(scores: &Vec<(u32, i32, i32)>) -> HashMap<&u32, Vec<&i8>> {
 }
 
 
-pub fn binary_scoring(scores: &Vec<(u32, i32, i32)>) -> Vec<(&u32, i8)> {
+pub fn binary_scoring(scores: &Vec<(u32, i32, i32)>) -> Vec<(&u32, f64)> {
     let parsed_scores = parse_scores(scores);
 
     let mut result = Vec::new();
     for (bc, r) in parsed_scores.into_iter() {
         if r.contains(&&ALT_VALUE) {
-            result.push((bc, ALT_VALUE));
+            result.push((bc, ALT_VALUE as f64));
         }
         else if r.contains(&&REF_VALUE) {
-            result.push((bc, REF_VALUE));
+            result.push((bc, REF_VALUE as f64));
         }
     }
     result
@@ -418,7 +429,7 @@ pub fn coverage(scores: &Vec<(u32, i32, i32)>) -> (Vec<(&u32, f64)>, Vec<(&u32, 
             }
         }
         result.0.push((bc, alt_count as f64));
-        result.1.push((bc, alt_count as f64));
+        result.1.push((bc, ref_count as f64));
     }
     result
 }
