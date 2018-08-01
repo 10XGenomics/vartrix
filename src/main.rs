@@ -4,13 +4,12 @@ extern crate clap;
 extern crate csv;
 extern crate serde;
 extern crate sprs;
-
-use std::cmp::{max, min};
-
 #[macro_use]
 extern crate serde_derive;
 #[macro_use]
 extern crate failure;
+
+use std::cmp::{max, min};
 use std::collections::HashMap;
 use clap::{Arg, App};
 use std::fs::File;
@@ -32,6 +31,12 @@ const ALT_VALUE: i8 = 2;
 
 fn main() {
     use rust_htslib::bcf::Read; //bring BCF Read into scope
+
+    let scoring_help = "Type of matrix to produce. Binary means that cells with 1
+or more alt reads are given a 2, and cells with all ref reads
+are given a 1. Suitable for clustering. Coverage requires that you set
+--ref-matrix to store the second matrix in.
+Alt_frac will report the fraction of alt reads.".replace("\n", " ");
 
     let args = App::new("vartrix")
         .version("0.1")
@@ -77,17 +82,31 @@ fn main() {
              .value_name("INTEGER")
              .default_value("100")
              .help("Number of padding to use on both sides of the variant. Should be at least 1/2 of read length"))
+        .arg(Arg::with_name("scoring_method")
+             .short("s")
+             .long("scoring-method")
+             .possible_values(&["binary", "coverage", "alt_frac"])
+             .default_value("binary")
+             .help(&scoring_help))
+        .arg(Arg::with_name("ref_matrix")
+             .long("ref-matrix")
+             .value_name("OUTPUT_FILE")
+             .required_if("scoring_method", "coverage")
+             .help("Location to write reference Matrix Market file. Only used if --scoring-method is coverage"))
         .get_matches();
 
     let fasta_file = args.value_of("fasta").expect("You must supply a fasta file");
     let vcf_file = args.value_of("vcf").expect("You must supply a VCF file");
     let bam_file = args.value_of("bam").expect("You must provide a BAM file");
     let cell_barcodes = args.value_of("cell_barcodes").expect("You must provide a cell barcodes file");
-    let out_matrix = args.value_of("out_matrix").expect("You must provide a path to write the out matrix");
+    let out_matrix_path = args.value_of("out_matrix").expect("You must provide a path to write the out matrix");
+    let ref_matrix_path = args.value_of("ref_matrix").unwrap_or("rustyrustrust");
     let padding = args.value_of("padding")
                       .unwrap_or_default()
                       .parse::<u32>()
                       .expect("Failed to convert padding to integer");
+    let scoring_method = args.value_of("scoring_method")
+                             .unwrap_or_default();
 
     let mut fa = fasta::IndexedReader::from_file(&fasta_file).unwrap();
     let mut rdr = bcf::Reader::from_path(&vcf_file).unwrap();
@@ -96,8 +115,8 @@ fn main() {
 
     // need to figure out how big to make the matrix, so just read the number of lines in the VCF
     let num_vars = rdr.records().count();
-
     let mut matrix = TriMat::new((num_vars, cell_barcodes.len()));
+    let mut ref_matrix = TriMat::new((num_vars, cell_barcodes.len()));
 
     let mut rdr = bcf::Reader::from_path(&vcf_file).unwrap();
 
@@ -120,13 +139,38 @@ fn main() {
         };
 
         let scores = evaluate_alns(&mut bam, &haps, &cell_barcodes).unwrap();
-        let result = binary_scoring(&scores);
 
+        match scoring_method {
+            "alt_frac" => {
+                let result = alt_frac(&scores);
+                for (i, r) in result {
+                    matrix.add_triplet(_j, *i as usize, r);
+        }
+            },
+            "binary" => {
+                let result = binary_scoring(&scores);
         for (i, r) in result {
             matrix.add_triplet(_j, *i as usize, r);
         }
+            },
+            "coverage" => {
+                let result = coverage(&scores);
+                for (i, r) in result.0 {
+                    matrix.add_triplet(_j, *i as usize, r);
+                }
+                for (i, r) in result.1 {
+                    ref_matrix.add_triplet(_j, *i as usize, r);
+                }
+            },
+            &_ => panic!("Scoring method is invalid")
+        };
     }
-    let _ = write_matrix_market(&out_matrix, &matrix).unwrap();
+    
+    let _ = write_matrix_market(&out_matrix_path, &matrix).unwrap();
+    
+    if args.is_present("ref_matrix") {
+        let _ = write_matrix_market(&ref_matrix_path as &str, &ref_matrix).unwrap();
+    }
 
     if args.is_present("out_variants") {
         let out_variants = args.value_of("out_variants").expect("Out variants path flag set but no value");
@@ -316,7 +360,7 @@ pub fn construct_haplotypes(fa: &mut fasta::IndexedReader<File>, locus: &Locus, 
 }
 
 
-pub fn binary_scoring(scores: &Vec<(u32, i32, i32)>) -> Vec<(&u32, i8)> {
+fn parse_scores(scores: &Vec<(u32, i32, i32)>) -> HashMap<&u32, Vec<&i8>> {
     let min_score = 25;
     let mut parsed_scores = HashMap::new();
     for (bc, ref_score, alt_score) in scores.into_iter() {
@@ -332,15 +376,60 @@ pub fn binary_scoring(scores: &Vec<(u32, i32, i32)>) -> Vec<(&u32, i8)> {
             parsed_scores.entry(bc).or_insert(Vec::new()).push(&ALT_VALUE);
         }
     }
+    parsed_scores
+}
+
+
+pub fn binary_scoring(scores: &Vec<(u32, i32, i32)>) -> Vec<(&u32, f64)> {
+    let parsed_scores = parse_scores(scores);
 
     let mut result = Vec::new();
     for (bc, r) in parsed_scores.into_iter() {
         if r.contains(&&ALT_VALUE) {
-            result.push((bc, ALT_VALUE));
+            result.push((bc, ALT_VALUE as f64));
         }
         else if r.contains(&&REF_VALUE) {
-            result.push((bc, REF_VALUE));
+            result.push((bc, REF_VALUE as f64));
         }
+    }
+    result
+}
+
+
+pub fn alt_frac(scores: &Vec<(u32, i32, i32)>) -> Vec<(&u32, f64)> {
+    let parsed_scores = parse_scores(scores);
+    let mut result = Vec::new();
+    for (bc, r) in parsed_scores.into_iter() {
+        let mut ref_count = 0;
+        let mut alt_count = 0;
+        for x in r.iter() {
+            match x {
+                &&REF_VALUE => ref_count += 1,
+                &&ALT_VALUE => alt_count += 1,
+                &&_ => panic!("How did this happen")
+            }
+        }
+        let alt_frac = alt_count as f64 / (ref_count as f64 + alt_count as f64);
+        result.push((bc, alt_frac));
+    }
+    result
+}
+
+pub fn coverage(scores: &Vec<(u32, i32, i32)>) -> (Vec<(&u32, f64)>, Vec<(&u32, f64)>) {
+    let parsed_scores = parse_scores(scores);
+    let mut result = (Vec::new(), Vec::new());
+    for (bc, r) in parsed_scores.into_iter() {
+        let mut ref_count = 0;
+        let mut alt_count = 0;
+        for x in r.iter() {
+            match x {
+                &&REF_VALUE => ref_count += 1,
+                &&ALT_VALUE => alt_count += 1,
+                &&_ => panic!("How did this happen")
+            }
+        }
+        result.0.push((bc, alt_count as f64));
+        result.1.push((bc, ref_count as f64));
     }
     result
 }
