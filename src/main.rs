@@ -127,14 +127,13 @@ Alt_frac will report the fraction of alt reads.".replace("\n", " ");
                            fasta_file: &fasta_file, 
                            padding: padding, 
                            bam_file: &bam_file, 
-                           cell_barcodes: &cell_barcodes, 
-                           scoring_method: scoring_method };
+                           cell_barcodes: &cell_barcodes};
         recs.push(s);
     }
 
-    let results = recs.par_iter().map(evaluate_rec);
+    let results: Vec<_> = recs.par_iter().map(evaluate_rec).collect();
 
-    results.enumerate().for_each(|(j, scores)| {
+    for (j, scores) in results.iter().enumerate() {
         match scoring_method {
             "alt_frac" => { 
                 let result = alt_frac(&scores); 
@@ -159,23 +158,19 @@ Alt_frac will report the fraction of alt reads.".replace("\n", " ");
             },
             &_ => { panic!("Scoring method is invalid") },
         };
-    });
-    
-    //for (j, (i, r)) in results.iter().enumerate() {
-    //    matrix.add_triplet(j, *i as usize, r);
-    //}
+    }
 
-    //let _ = write_matrix_market(&out_matrix_path, &matrix).unwrap();
-    
-    /*if args.is_present("ref_matrix") {
+    let _ = write_matrix_market(&out_matrix_path as &str, &matrix).unwrap();
+    if args.is_present("ref_matrix") {
         let _ = write_matrix_market(&ref_matrix_path as &str, &ref_matrix).unwrap();
     }
 
     if args.is_present("out_variants") {
         let out_variants = args.value_of("out_variants").expect("Out variants path flag set but no value");
         write_variants(out_variants, vcf_file);
-    }*/
+    }
 }
+
 
 pub struct RecHolder<'a> {
     rec: bcf::Record,
@@ -183,34 +178,6 @@ pub struct RecHolder<'a> {
     padding: u32,
     bam_file: &'a str,
     cell_barcodes: &'a HashMap<Vec<u8>, u32>,
-    scoring_method: &'a str,
-}
-
-
-//Vec<(usize, rust_htslib::bcf::Record, bio::io::fasta::IndexedReader<std::fs::File>, u32, 
-//rust_htslib::bam::IndexedReader, std::collections::HashMap<std::vec::Vec<u8>, u32>)>
-
-pub fn evaluate_rec<'a>(rh: &RecHolder) -> Vec<(u32, i32, i32)> {
-    let mut bam = bam::IndexedReader::from_path(rh.bam_file).unwrap();
-    let chr = String::from_utf8(rh.rec.header().rid2name(rh.rec.rid().unwrap()).to_vec()).unwrap();
-
-    let alleles = rh.rec.alleles();
-
-    let locus = Locus { chrom: chr.to_string(), 
-                        start: rh.rec.pos(), 
-                        end: rh.rec.pos() + alleles[0].len() as u32 };
-
-    let mut fa = fasta::IndexedReader::from_file(&rh.fasta_file).unwrap();
-    let (rref, alt) = construct_haplotypes(&mut fa, &locus, alleles[1], rh.padding);
-
-    let haps = VariantHaps {
-        locus: Locus { chrom: chr, start: locus.start, end: locus.end },
-        rref,
-        alt
-    };
-
-    let scores = evaluate_alns(&mut bam, &haps, &rh.cell_barcodes).unwrap();
-    scores
 }
 
 
@@ -392,6 +359,30 @@ pub fn construct_haplotypes(fa: &mut fasta::IndexedReader<File>, locus: &Locus, 
 
     let (ref_hap, _) = read_locus(fa, locus, padding, padding);
     (ref_hap, alt_hap)
+}
+
+
+pub fn evaluate_rec<'a>(rh: &RecHolder) -> Vec<(u32, i32, i32)> {
+    let mut bam = bam::IndexedReader::from_path(rh.bam_file).unwrap();
+    let chr = String::from_utf8(rh.rec.header().rid2name(rh.rec.rid().unwrap()).to_vec()).unwrap();
+
+    let alleles = rh.rec.alleles();
+
+    let locus = Locus { chrom: chr.to_string(), 
+                        start: rh.rec.pos(), 
+                        end: rh.rec.pos() + alleles[0].len() as u32 };
+
+    let mut fa = fasta::IndexedReader::from_file(&rh.fasta_file).unwrap();
+    let (rref, alt) = construct_haplotypes(&mut fa, &locus, alleles[1], rh.padding);
+
+    let haps = VariantHaps {
+        locus: Locus { chrom: chr, start: locus.start, end: locus.end },
+        rref,
+        alt
+    };
+
+    let scores = evaluate_alns(&mut bam, &haps, &rh.cell_barcodes).unwrap();
+    scores
 }
 
 
