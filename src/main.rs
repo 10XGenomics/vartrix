@@ -4,6 +4,7 @@ extern crate clap;
 extern crate csv;
 extern crate serde;
 extern crate sprs;
+extern crate rayon;
 #[macro_use]
 extern crate serde_derive;
 #[macro_use]
@@ -24,6 +25,7 @@ use std::io::{BufRead, BufReader};
 use sprs::io::write_matrix_market;
 use sprs::TriMat;
 use rust_htslib::bcf;
+use rayon::prelude::*;
 
 const REF_VALUE: i8 = 1;
 const ALT_VALUE: i8 = 2;
@@ -97,7 +99,7 @@ Alt_frac will report the fraction of alt reads.".replace("\n", " ");
 
     let fasta_file = args.value_of("fasta").expect("You must supply a fasta file");
     let vcf_file = args.value_of("vcf").expect("You must supply a VCF file");
-    let bam_file = args.value_of("bam").expect("You must provide a BAM file");
+    let bam_file = args.value_of("bam").expect("You must provide a BAM file").as_bytes().to_vec();
     let cell_barcodes = args.value_of("cell_barcodes").expect("You must provide a cell barcodes file");
     let out_matrix_path = args.value_of("out_matrix").expect("You must provide a path to write the out matrix");
     let ref_matrix_path = args.value_of("ref_matrix").unwrap_or("rustyrustrust");
@@ -106,11 +108,10 @@ Alt_frac will report the fraction of alt reads.".replace("\n", " ");
                       .parse::<u32>()
                       .expect("Failed to convert padding to integer");
     let scoring_method = args.value_of("scoring_method")
-                             .unwrap_or_default();
+                             .unwrap_or_default().as_bytes().to_vec();
 
     let mut fa = fasta::IndexedReader::from_file(&fasta_file).unwrap();
     let mut rdr = bcf::Reader::from_path(&vcf_file).unwrap();
-    let mut bam = bam::IndexedReader::from_path(&bam_file).unwrap();
     let cell_barcodes = load_barcodes(&cell_barcodes).unwrap();
 
     // need to figure out how big to make the matrix, so just read the number of lines in the VCF
@@ -120,53 +121,28 @@ Alt_frac will report the fraction of alt reads.".replace("\n", " ");
 
     let mut rdr = bcf::Reader::from_path(&vcf_file).unwrap();
 
-    for (_j, _rec) in rdr.records().enumerate() {
+    let mut recs = Vec::new();
+    for _rec in rdr.records() {
         let rec = _rec.unwrap();
-        let chr = String::from_utf8(rec.header().rid2name(rec.rid().unwrap()).to_vec()).unwrap();
-
-        let alleles = rec.alleles();
-
-        let locus = Locus { chrom: chr.to_string(), 
-                            start: rec.pos(), 
-                            end: rec.pos() + alleles[0].len() as u32 };
-
-        let (rref, alt) = construct_haplotypes(&mut fa, &locus, alleles[1], padding);
-
-        let haps = VariantHaps {
-            locus: Locus { chrom: chr, start: locus.start, end: locus.end },
-            rref,
-            alt
-        };
-
-        let scores = evaluate_alns(&mut bam, &haps, &cell_barcodes).unwrap();
-
-        match scoring_method {
-            "alt_frac" => {
-                let result = alt_frac(&scores);
-                for (i, r) in result {
-                    matrix.add_triplet(_j, *i as usize, r);
-        }
-            },
-            "binary" => {
-                let result = binary_scoring(&scores);
-        for (i, r) in result {
-            matrix.add_triplet(_j, *i as usize, r);
-        }
-            },
-            "coverage" => {
-                let result = coverage(&scores);
-                for (i, r) in result.0 {
-                    matrix.add_triplet(_j, *i as usize, r);
-                }
-                for (i, r) in result.1 {
-                    ref_matrix.add_triplet(_j, *i as usize, r);
-                }
-            },
-            &_ => panic!("Scoring method is invalid")
-        };
+        let s = RecHolder {rec: rec, 
+                           fa: &fa, 
+                           padding: padding, 
+                           bam_file: &bam_file, 
+                           cell_barcodes: &cell_barcodes, 
+                           scoring_method: &scoring_method };
+        recs.push(s);
     }
+
+    let results: Vec<Vec<(&u32, f64)> > = recs.par_iter().map(evaluate_rec).collect();
     
-    let _ = write_matrix_market(&out_matrix_path, &matrix).unwrap();
+    println!("{:?}", results);
+    matrix.add_triplet(1, 2, 3);
+    ref_matrix.add_triplet(1, 2, 3);
+    //for (j, (i, r)) in results.iter().enumerate() {
+    //    matrix.add_triplet(j, *i as usize, r);
+    //}
+
+    //let _ = write_matrix_market(&out_matrix_path, &matrix).unwrap();
     
     if args.is_present("ref_matrix") {
         let _ = write_matrix_market(&ref_matrix_path as &str, &ref_matrix).unwrap();
@@ -176,6 +152,48 @@ Alt_frac will report the fraction of alt reads.".replace("\n", " ");
         let out_variants = args.value_of("out_variants").expect("Out variants path flag set but no value");
         write_variants(out_variants, vcf_file);
     }
+}
+
+pub struct RecHolder {
+    rec: bcf::Record,
+    fa: &'static fasta::IndexedReader<File>,
+    padding: u32,
+    bam_file: &'static Vec<u8>,
+    cell_barcodes: &'static HashMap<Vec<u8>, u32>,
+    scoring_method: &'static Vec<u8>,
+}
+
+
+//Vec<(usize, rust_htslib::bcf::Record, bio::io::fasta::IndexedReader<std::fs::File>, u32, 
+//rust_htslib::bam::IndexedReader, std::collections::HashMap<std::vec::Vec<u8>, u32>)>
+
+pub fn evaluate_rec(rh: &RecHolder) -> Vec<(&u32, f64)> {
+    let mut bam = bam::IndexedReader::from_path(String::from_utf8(*rh.bam_file).unwrap()).unwrap();
+    let chr = String::from_utf8(rh.rec.header().rid2name(rh.rec.rid().unwrap()).to_vec()).unwrap();
+
+    let alleles = rh.rec.alleles();
+
+    let locus = Locus { chrom: chr.to_string(), 
+                        start: rh.rec.pos(), 
+                        end: rh.rec.pos() + alleles[0].len() as u32 };
+
+    let (rref, alt) = construct_haplotypes(&mut rh.fa, &locus, alleles[1], rh.padding);
+
+    let haps = VariantHaps {
+        locus: Locus { chrom: chr, start: locus.start, end: locus.end },
+        rref,
+        alt
+    };
+
+    let scores = evaluate_alns(&mut bam, &haps, &rh.cell_barcodes).unwrap();
+
+    let scoring_method: &str = &String::from_utf8(*rh.scoring_method).unwrap();
+    match scoring_method {
+        "alt_frac" => { return alt_frac(&scores); },
+        "binary" => { return binary_scoring(&scores); },
+        //"coverage" => { return coverage(&scores); },
+        &_ => { panic!("Scoring method is invalid") },
+    };
 }
 
 
