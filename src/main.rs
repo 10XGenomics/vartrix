@@ -32,7 +32,7 @@ const ALT_VALUE: i8 = 2;
 
 
 fn main() {
-    use rust_htslib::bcf::Read; //bring BCF Read into scope
+    use rust_htslib::bcf::Read; //bring BCF Read into scope; why do I need to do this?
 
     let scoring_help = "Type of matrix to produce. Binary means that cells with 1
 or more alt reads are given a 2, and cells with all ref reads
@@ -95,6 +95,11 @@ Alt_frac will report the fraction of alt reads.".replace("\n", " ");
              .value_name("OUTPUT_FILE")
              .required_if("scoring_method", "coverage")
              .help("Location to write reference Matrix Market file. Only used if --scoring-method is coverage"))
+        .arg(Arg::with_name("threads")
+             .long("threads")
+             .value_name("INTEGER")
+             .default_value("1")
+             .help("Number of parallel threads to use"))
         .get_matches();
 
     let fasta_file = args.value_of("fasta").expect("You must supply a fasta file");
@@ -107,8 +112,12 @@ Alt_frac will report the fraction of alt reads.".replace("\n", " ");
                       .unwrap_or_default()
                       .parse::<u32>()
                       .expect("Failed to convert padding to integer");
-    let scoring_method = args.value_of("scoring_method")
-                             .unwrap_or_default();
+    let scoring_method = args.value_of("scoring_method").unwrap_or_default();
+    let threads = args.value_of("threads").unwrap_or_default()
+                                          .parse::<usize>()
+                                          .expect("Failed to convert threads to integer");
+
+    rayon::ThreadPoolBuilder::new().num_threads(threads).build_global().unwrap();
 
     let mut rdr = bcf::Reader::from_path(&vcf_file).unwrap();
     let cell_barcodes = load_barcodes(&cell_barcodes).unwrap();
@@ -118,42 +127,43 @@ Alt_frac will report the fraction of alt reads.".replace("\n", " ");
     let mut matrix = TriMat::new((num_vars, cell_barcodes.len()));
     let mut ref_matrix = TriMat::new((num_vars, cell_barcodes.len()));
 
-    let mut rdr = bcf::Reader::from_path(&vcf_file).unwrap();
+    let mut rdr = bcf::Reader::from_path(&vcf_file).unwrap(); // have to re-start the reader
 
     let mut recs = Vec::new();
-    for _rec in rdr.records() {
+    for (i, _rec) in rdr.records().enumerate() {
         let rec = _rec.unwrap();
-        let s = RecHolder {rec: rec, 
-                           fasta_file: &fasta_file, 
-                           padding: padding, 
-                           bam_file: &bam_file, 
-                           cell_barcodes: &cell_barcodes};
+        let s = RecHolder { i: i,
+                            rec: rec, 
+                            fasta_file: &fasta_file, 
+                            padding: padding, 
+                            bam_file: &bam_file, 
+                            cell_barcodes: &cell_barcodes};
         recs.push(s);
     }
 
     let results: Vec<_> = recs.par_iter().map(evaluate_rec).collect();
 
-    for (j, scores) in results.iter().enumerate() {
+    for (i, scores) in results.iter() {
         match scoring_method {
             "alt_frac" => { 
                 let result = alt_frac(&scores); 
-                for (i, r) in result {
-                    matrix.add_triplet(j, *i as usize, r);
+                for (j, r) in result {
+                    matrix.add_triplet(*i, *j as usize, r);
                 }
             },
             "binary" => { 
                 let result = binary_scoring(&scores); 
-                for (i, r) in result {
-                    matrix.add_triplet(j, *i as usize, r);
+                for (j, r) in result {
+                    matrix.add_triplet(*i, *j as usize, r);
                 }
             },
             "coverage" => { 
                 let result = coverage(&scores); 
-                for (i, r) in result.0 {
-                    matrix.add_triplet(j, *i as usize, r);
+                for (j, r) in result.0 {
+                    matrix.add_triplet(*i, *j as usize, r);
                 }
-                for (i, r) in result.1 {
-                    ref_matrix.add_triplet(j, *i as usize, r);
+                for (j, r) in result.1 {
+                    ref_matrix.add_triplet(*i, *j as usize, r);
                 }
             },
             &_ => { panic!("Scoring method is invalid") },
@@ -173,6 +183,7 @@ Alt_frac will report the fraction of alt reads.".replace("\n", " ");
 
 
 pub struct RecHolder<'a> {
+    i: usize,
     rec: bcf::Record,
     fasta_file: &'a str,
     padding: u32,
@@ -362,7 +373,7 @@ pub fn construct_haplotypes(fa: &mut fasta::IndexedReader<File>, locus: &Locus, 
 }
 
 
-pub fn evaluate_rec<'a>(rh: &RecHolder) -> Vec<(u32, i32, i32)> {
+pub fn evaluate_rec<'a>(rh: &RecHolder) -> (usize, Vec<(u32, i32, i32)>) {
     let mut bam = bam::IndexedReader::from_path(rh.bam_file).unwrap();
     let chr = String::from_utf8(rh.rec.header().rid2name(rh.rec.rid().unwrap()).to_vec()).unwrap();
 
@@ -382,7 +393,7 @@ pub fn evaluate_rec<'a>(rh: &RecHolder) -> Vec<(u32, i32, i32)> {
     };
 
     let scores = evaluate_alns(&mut bam, &haps, &rh.cell_barcodes).unwrap();
-    scores
+    (rh.i, scores)
 }
 
 
