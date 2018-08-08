@@ -6,7 +6,7 @@ At this point, all multi-allelic sites are ignored. They will still be a column 
 
 ### Usage
 
-`--vcf (-v)`: Input VCF formatted variants to be assigned. Cannot be gzipped. REQUIRED.
+`--vcf (-v)`: Input VCF formatted variants to be assigned. REQUIRED.
 
 `--bam (-b)`: Input CellRanger BAM. This BAM must have the `CB` tag to define the barcodes of cell barcodes. REQUIRED.
 
