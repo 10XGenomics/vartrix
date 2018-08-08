@@ -4,6 +4,8 @@ extern crate clap;
 extern crate csv;
 extern crate serde;
 extern crate sprs;
+extern crate rayon;
+extern crate terminal_size;
 #[macro_use]
 extern crate serde_derive;
 #[macro_use]
@@ -23,24 +25,24 @@ use std::path::Path;
 use std::io::{BufRead, BufReader};
 use sprs::io::write_matrix_market;
 use sprs::TriMat;
-use rust_htslib::bcf;
+use rust_htslib::bcf::{self, Read as BcfRead};
+use rayon::prelude::*;
+use terminal_size::{Width, terminal_size};
 
 const REF_VALUE: i8 = 1;
 const ALT_VALUE: i8 = 2;
 
 
 fn main() {
-    use rust_htslib::bcf::Read; //bring BCF Read into scope
-
     let scoring_help = "Type of matrix to produce. Binary means that cells with 1
 or more alt reads are given a 2, and cells with all ref reads
 are given a 1. Suitable for clustering. Coverage requires that you set
 --ref-matrix to store the second matrix in.
 Alt_frac will report the fraction of alt reads.".replace("\n", " ");
-
     let args = App::new("vartrix")
+        .set_term_width(if let Some((Width(w), _)) = terminal_size() { w as usize } else { 120 })
         .version("0.1")
-        .author("Ian Fiddes <ian.fiddes@10xgenomics.com>")
+        .author("Ian Fiddes <ian.fiddes@10xgenomics.com> and Patrick Marks <patrick@10xgenomics.com>")
         .about("Variant assignment for single cell genomics")
         .arg(Arg::with_name("vcf")
              .short("v")
@@ -93,6 +95,11 @@ Alt_frac will report the fraction of alt reads.".replace("\n", " ");
              .value_name("OUTPUT_FILE")
              .required_if("scoring_method", "coverage")
              .help("Location to write reference Matrix Market file. Only used if --scoring-method is coverage"))
+        .arg(Arg::with_name("threads")
+             .long("threads")
+             .value_name("INTEGER")
+             .default_value("1")
+             .help("Number of parallel threads to use"))
         .get_matches();
 
     let fasta_file = args.value_of("fasta").expect("You must supply a fasta file");
@@ -100,17 +107,19 @@ Alt_frac will report the fraction of alt reads.".replace("\n", " ");
     let bam_file = args.value_of("bam").expect("You must provide a BAM file");
     let cell_barcodes = args.value_of("cell_barcodes").expect("You must provide a cell barcodes file");
     let out_matrix_path = args.value_of("out_matrix").expect("You must provide a path to write the out matrix");
-    let ref_matrix_path = args.value_of("ref_matrix").unwrap_or("rustyrustrust");
+    let ref_matrix_path = args.value_of("ref_matrix").unwrap_or("ref.matrix");  // Why do I have to have this or?
     let padding = args.value_of("padding")
                       .unwrap_or_default()
                       .parse::<u32>()
                       .expect("Failed to convert padding to integer");
-    let scoring_method = args.value_of("scoring_method")
-                             .unwrap_or_default();
+    let scoring_method = args.value_of("scoring_method").unwrap_or_default();
+    let threads = args.value_of("threads").unwrap_or_default()
+                                          .parse::<usize>()
+                                          .expect("Failed to convert threads to integer");
 
-    let mut fa = fasta::IndexedReader::from_file(&fasta_file).unwrap();
+    rayon::ThreadPoolBuilder::new().num_threads(threads).build_global().unwrap();
+
     let mut rdr = bcf::Reader::from_path(&vcf_file).unwrap();
-    let mut bam = bam::IndexedReader::from_path(&bam_file).unwrap();
     let cell_barcodes = load_barcodes(&cell_barcodes).unwrap();
 
     // need to figure out how big to make the matrix, so just read the number of lines in the VCF
@@ -118,56 +127,50 @@ Alt_frac will report the fraction of alt reads.".replace("\n", " ");
     let mut matrix = TriMat::new((num_vars, cell_barcodes.len()));
     let mut ref_matrix = TriMat::new((num_vars, cell_barcodes.len()));
 
-    let mut rdr = bcf::Reader::from_path(&vcf_file).unwrap();
+    let mut rdr = bcf::Reader::from_path(&vcf_file).unwrap(); // have to re-start the reader
 
-    for (_j, _rec) in rdr.records().enumerate() {
+    let mut recs = Vec::new();
+    for (i, _rec) in rdr.records().enumerate() {
         let rec = _rec.unwrap();
-        let chr = String::from_utf8(rec.header().rid2name(rec.rid().unwrap()).to_vec()).unwrap();
+        let s = RecHolder { i: i,
+                            rec: rec, 
+                            fasta_file: &fasta_file, 
+                            padding: padding, 
+                            bam_file: &bam_file, 
+                            cell_barcodes: &cell_barcodes};
+        recs.push(s);
+    }
 
-        let alleles = rec.alleles();
+    let results: Vec<_> = recs.par_iter().map(evaluate_rec).collect();
 
-        let locus = Locus { chrom: chr.to_string(), 
-                            start: rec.pos(), 
-                            end: rec.pos() + alleles[0].len() as u32 };
-
-        let (rref, alt) = construct_haplotypes(&mut fa, &locus, alleles[1], padding);
-
-        let haps = VariantHaps {
-            locus: Locus { chrom: chr, start: locus.start, end: locus.end },
-            rref,
-            alt
-        };
-
-        let scores = evaluate_alns(&mut bam, &haps, &cell_barcodes).unwrap();
-
+    for (i, scores) in results.iter() {
         match scoring_method {
-            "alt_frac" => {
-                let result = alt_frac(&scores);
-                for (i, r) in result {
-                    matrix.add_triplet(_j, *i as usize, r);
-        }
-            },
-            "binary" => {
-                let result = binary_scoring(&scores);
-        for (i, r) in result {
-            matrix.add_triplet(_j, *i as usize, r);
-        }
-            },
-            "coverage" => {
-                let result = coverage(&scores);
-                for (i, r) in result.0 {
-                    matrix.add_triplet(_j, *i as usize, r);
-                }
-                for (i, r) in result.1 {
-                    ref_matrix.add_triplet(_j, *i as usize, r);
+            "alt_frac" => { 
+                let result = alt_frac(&scores); 
+                for (j, r) in result {
+                    matrix.add_triplet(*i, *j as usize, r);
                 }
             },
-            &_ => panic!("Scoring method is invalid")
+            "binary" => { 
+                let result = binary_scoring(&scores); 
+                for (j, r) in result {
+                    matrix.add_triplet(*i, *j as usize, r);
+                }
+            },
+            "coverage" => { 
+                let result = coverage(&scores); 
+                for (j, r) in result.0 {
+                    matrix.add_triplet(*i, *j as usize, r);
+                }
+                for (j, r) in result.1 {
+                    ref_matrix.add_triplet(*i, *j as usize, r);
+                }
+            },
+            &_ => { panic!("Scoring method is invalid") },
         };
     }
-    
-    let _ = write_matrix_market(&out_matrix_path, &matrix).unwrap();
-    
+
+    let _ = write_matrix_market(&out_matrix_path as &str, &matrix).unwrap();
     if args.is_present("ref_matrix") {
         let _ = write_matrix_market(&ref_matrix_path as &str, &ref_matrix).unwrap();
     }
@@ -176,6 +179,16 @@ Alt_frac will report the fraction of alt reads.".replace("\n", " ");
         let out_variants = args.value_of("out_variants").expect("Out variants path flag set but no value");
         write_variants(out_variants, vcf_file);
     }
+}
+
+
+pub struct RecHolder<'a> {
+    i: usize,
+    rec: bcf::Record,
+    fasta_file: &'a str,
+    padding: u32,
+    bam_file: &'a str,
+    cell_barcodes: &'a HashMap<Vec<u8>, u32>,
 }
 
 
@@ -221,28 +234,6 @@ pub fn get_cell_barcode(rec: &Record, cell_barcodes: &HashMap<Vec<u8>, u32>) -> 
 }
 
 
-pub fn complement(b: u8) -> u8 {
-    match b {
-        b'A' => b'T',
-        b'C' => b'G',
-        b'G' => b'C',
-        b'T' => b'A',
-        b'N' => b'N',
-        _ => panic!("unrecognized"),
-    }
-}
-
-
-pub fn rc_seq(vec: &Vec<u8>) -> Vec<u8> {
-    let mut res = Vec::new();
-
-    for b in vec.iter().rev() {
-        res.push(complement(*b));
-    }
-    res
-}
-
-
 pub fn chrom_len(chrom: &str, fa: &mut fasta::IndexedReader<File>) -> Result<u64, Error> {
     for s in fa.index.sequences() {
         if s.name == chrom {
@@ -258,7 +249,8 @@ pub fn useful_rec(haps: &VariantHaps, rec: &bam::Record) -> Result<bool, Error> 
     // for now, overlap will be defined as having an aligned base anywhere in the locus
         let cigar = rec.cigar();
         for i in haps.locus.start..=haps.locus.end {
-            let t = cigar.read_pos(i, false, true)?;
+            // Don't include soft-clips but do include deletions
+            let t = cigar.read_pos(i, false, true)?; 
             if t.is_some() {
                 return Ok(true)
             }
@@ -283,8 +275,7 @@ pub fn evaluate_alns(bam: &mut bam::IndexedReader,
     for _rec in bam.records() {
         let rec = _rec?;
 
-        let is_useful = useful_rec(haps, &rec).unwrap();
-        if is_useful == false {
+        if useful_rec(haps, &rec).unwrap() == false {
             continue;
         }
 
@@ -294,13 +285,7 @@ pub fn evaluate_alns(bam: &mut bam::IndexedReader,
         }
         let cell_index = cell_index.unwrap();
 
-        let fwd = rec.seq().as_bytes();
-        let rev = rc_seq(&fwd);
-        let seq = if rec.is_reverse() {
-            &fwd
-        } else {
-            &rev
-        };
+        let seq = &rec.seq().as_bytes();
 
         let score = |a: u8, b: u8| if a == b {1i32} else {-5i32};
         let k = 6;  // kmer match length
@@ -337,7 +322,10 @@ pub fn read_locus(fa: &mut fasta::IndexedReader<File>,
 
 
 // Get padded ref and alt haplotypes around the variant. Locus must cover the REF bases of the VCF variant.
-pub fn construct_haplotypes(fa: &mut fasta::IndexedReader<File>, locus: &Locus, alt: &[u8], padding: u32) -> (Vec<u8>, Vec<u8>)
+pub fn construct_haplotypes(fa: &mut fasta::IndexedReader<File>, 
+                            locus: &Locus, 
+                            alt: &[u8], 
+                            padding: u32) -> (Vec<u8>, Vec<u8>)
 {
     let chrom_len = chrom_len(&locus.chrom, fa).unwrap();
 
@@ -357,6 +345,30 @@ pub fn construct_haplotypes(fa: &mut fasta::IndexedReader<File>, locus: &Locus, 
 
     let (ref_hap, _) = read_locus(fa, locus, padding, padding);
     (ref_hap, alt_hap)
+}
+
+
+pub fn evaluate_rec<'a>(rh: &RecHolder) -> (usize, Vec<(u32, i32, i32)>) {
+    let mut bam = bam::IndexedReader::from_path(rh.bam_file).unwrap();
+    let chr = String::from_utf8(rh.rec.header().rid2name(rh.rec.rid().unwrap()).to_vec()).unwrap();
+
+    let alleles = rh.rec.alleles();
+
+    let locus = Locus { chrom: chr.to_string(), 
+                        start: rh.rec.pos(), 
+                        end: rh.rec.pos() + alleles[0].len() as u32 };
+
+    let mut fa = fasta::IndexedReader::from_file(&rh.fasta_file).unwrap();
+    let (rref, alt) = construct_haplotypes(&mut fa, &locus, alleles[1], rh.padding);
+
+    let haps = VariantHaps {
+        locus: Locus { chrom: chr, start: locus.start, end: locus.end },
+        rref,
+        alt
+    };
+
+    let scores = evaluate_alns(&mut bam, &haps, &rh.cell_barcodes).unwrap();
+    (rh.i, scores)
 }
 
 
@@ -437,8 +449,6 @@ pub fn coverage(scores: &Vec<(u32, i32, i32)>) -> (Vec<(&u32, f64)>, Vec<(&u32, 
 
 pub fn write_variants(out_variants: &str, vcf_file: &str) {
     // write the variants to a TSV file for easy loading into Seraut
-
-    use rust_htslib::bcf::Read; //bring BCF Read into scope
     let mut rdr = bcf::Reader::from_path(&vcf_file).unwrap();
     let mut of = File::create(out_variants).unwrap();
     for _rec in rdr.records() {
