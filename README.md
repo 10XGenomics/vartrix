@@ -1,10 +1,10 @@
-##VarTrix
+## VarTrix
 
 VarTrix is a tool for extracting single-cell variant information from single-cell sequencing datasets. VarTrix uses Smith-Waterman alignment to evaluate reads that map to a known variant locus and assign single cells to these variants. This process works on both single-cell RNA sequencing datasets as well as single-cell DNA sequencing datasets.
 
 At this point, all multi-allelic sites are ignored. They will still be a column in the final matrix to maintain ordering, but all values will be empty.
 
-###Usage
+### Usage
 
 `--vcf (-v)`: Input VCF formatted variants to be assigned. Cannot be gzipped. REQUIRED.
 
@@ -27,5 +27,5 @@ At this point, all multi-allelic sites are ignored. They will still be a column 
 `--threads`: The number of parallel threads to use.
 
 
-###License
+### License
 VarTrix is distributed under the MIT license.
