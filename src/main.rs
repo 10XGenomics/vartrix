@@ -5,6 +5,7 @@ extern crate csv;
 extern crate serde;
 extern crate sprs;
 extern crate rayon;
+extern crate terminal_size;
 #[macro_use]
 extern crate serde_derive;
 #[macro_use]
@@ -24,25 +25,24 @@ use std::path::Path;
 use std::io::{BufRead, BufReader};
 use sprs::io::write_matrix_market;
 use sprs::TriMat;
-use rust_htslib::bcf;
+use rust_htslib::bcf::{self, Read as BcfRead};
 use rayon::prelude::*;
+use terminal_size::{Width, terminal_size};
 
 const REF_VALUE: i8 = 1;
 const ALT_VALUE: i8 = 2;
 
 
 fn main() {
-    use rust_htslib::bcf::Read; //bring BCF Read into scope; why do I need to do this?
-
     let scoring_help = "Type of matrix to produce. Binary means that cells with 1
 or more alt reads are given a 2, and cells with all ref reads
 are given a 1. Suitable for clustering. Coverage requires that you set
 --ref-matrix to store the second matrix in.
 Alt_frac will report the fraction of alt reads.".replace("\n", " ");
-
     let args = App::new("vartrix")
+        .set_term_width(if let Some((Width(w), _)) = terminal_size() { w as usize } else { 120 })
         .version("0.1")
-        .author("Ian Fiddes <ian.fiddes@10xgenomics.com>")
+        .author("Ian Fiddes <ian.fiddes@10xgenomics.com> and Patrick Marks <patrick@10xgenomics.com>")
         .about("Variant assignment for single cell genomics")
         .arg(Arg::with_name("vcf")
              .short("v")
@@ -107,7 +107,7 @@ Alt_frac will report the fraction of alt reads.".replace("\n", " ");
     let bam_file = args.value_of("bam").expect("You must provide a BAM file");
     let cell_barcodes = args.value_of("cell_barcodes").expect("You must provide a cell barcodes file");
     let out_matrix_path = args.value_of("out_matrix").expect("You must provide a path to write the out matrix");
-    let ref_matrix_path = args.value_of("ref_matrix").unwrap_or("rustyrustrust");
+    let ref_matrix_path = args.value_of("ref_matrix").unwrap_or("ref.matrix");  // Why do I have to have this or?
     let padding = args.value_of("padding")
                       .unwrap_or_default()
                       .parse::<u32>()
@@ -271,7 +271,8 @@ pub fn useful_rec(haps: &VariantHaps, rec: &bam::Record) -> Result<bool, Error> 
     // for now, overlap will be defined as having an aligned base anywhere in the locus
         let cigar = rec.cigar();
         for i in haps.locus.start..=haps.locus.end {
-            let t = cigar.read_pos(i, false, true)?;
+            // Don't include soft-clips but do include deletions
+            let t = cigar.read_pos(i, false, true)?; 
             if t.is_some() {
                 return Ok(true)
             }
@@ -296,8 +297,7 @@ pub fn evaluate_alns(bam: &mut bam::IndexedReader,
     for _rec in bam.records() {
         let rec = _rec?;
 
-        let is_useful = useful_rec(haps, &rec).unwrap();
-        if is_useful == false {
+        if useful_rec(haps, &rec).unwrap() == false {
             continue;
         }
 
@@ -350,7 +350,10 @@ pub fn read_locus(fa: &mut fasta::IndexedReader<File>,
 
 
 // Get padded ref and alt haplotypes around the variant. Locus must cover the REF bases of the VCF variant.
-pub fn construct_haplotypes(fa: &mut fasta::IndexedReader<File>, locus: &Locus, alt: &[u8], padding: u32) -> (Vec<u8>, Vec<u8>)
+pub fn construct_haplotypes(fa: &mut fasta::IndexedReader<File>, 
+                            locus: &Locus, 
+                            alt: &[u8], 
+                            padding: u32) -> (Vec<u8>, Vec<u8>)
 {
     let chrom_len = chrom_len(&locus.chrom, fa).unwrap();
 
@@ -474,8 +477,6 @@ pub fn coverage(scores: &Vec<(u32, i32, i32)>) -> (Vec<(&u32, f64)>, Vec<(&u32, 
 
 pub fn write_variants(out_variants: &str, vcf_file: &str) {
     // write the variants to a TSV file for easy loading into Seraut
-
-    use rust_htslib::bcf::Read; //bring BCF Read into scope
     let mut rdr = bcf::Reader::from_path(&vcf_file).unwrap();
     let mut of = File::create(out_variants).unwrap();
     for _rec in rdr.records() {
