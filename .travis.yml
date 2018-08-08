@@ -1,0 +1,23 @@
+language: rust
+env:
+  global:
+    - PROJECT_NAME: vartrix
+    - RUST_BACKTRACE: full
+matrix:
+  fast_finish: true
+  include:
+    - os: osx
+      rust: stable
+      env: TARGET=x86_64-apple-darwin
+    - os: linux
+      rust: stable
+      env: TARGET=x86_64-unknown-linux-gnu
+install: ci/install.sh
+script: ci/script.sh
+before_deploy: ci/before_deploy.sh
+deploy:
+  provider: releases
+  file: deployment/${PROJECT_NAME}-${TRAVIS_TAG}-${TARGET}.tar.gz
+  on:
+    branch: master
+    tags: true
