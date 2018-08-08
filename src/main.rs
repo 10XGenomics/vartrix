@@ -234,28 +234,6 @@ pub fn get_cell_barcode(rec: &Record, cell_barcodes: &HashMap<Vec<u8>, u32>) -> 
 }
 
 
-pub fn complement(b: u8) -> u8 {
-    match b {
-        b'A' => b'T',
-        b'C' => b'G',
-        b'G' => b'C',
-        b'T' => b'A',
-        b'N' => b'N',
-        _ => panic!("unrecognized"),
-    }
-}
-
-
-pub fn rc_seq(vec: &Vec<u8>) -> Vec<u8> {
-    let mut res = Vec::new();
-
-    for b in vec.iter().rev() {
-        res.push(complement(*b));
-    }
-    res
-}
-
-
 pub fn chrom_len(chrom: &str, fa: &mut fasta::IndexedReader<File>) -> Result<u64, Error> {
     for s in fa.index.sequences() {
         if s.name == chrom {
@@ -307,13 +285,7 @@ pub fn evaluate_alns(bam: &mut bam::IndexedReader,
         }
         let cell_index = cell_index.unwrap();
 
-        let fwd = rec.seq().as_bytes();
-        let rev = rc_seq(&fwd);
-        let seq = if rec.is_reverse() {
-            &fwd
-        } else {
-            &rev
-        };
+        let seq = &rec.seq().as_bytes();
 
         let score = |a: u8, b: u8| if a == b {1i32} else {-5i32};
         let k = 6;  // kmer match length
