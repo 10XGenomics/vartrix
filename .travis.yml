@@ -22,3 +22,5 @@ deploy:
   file: deployment/${PROJECT_NAME}-${TRAVIS_TAG}-${TARGET}.tar.gz
   on:
     repo: 10XGenomics/vartrix
+    branch: master
+    tags: true
