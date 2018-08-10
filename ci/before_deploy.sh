@@ -19,7 +19,7 @@ mk_tarball() {
     local tmpdir="$(mktemp -d)"
     local name="${PROJECT_NAME}-${TRAVIS_TAG}-${TARGET}"
     local staging="$tmpdir/$name"
-    mkdir -p "$staging"/{complete,doc}
+    mkdir -p "$staging"
     # The deployment directory is where the final archive will reside.
     # This path is known by the .travis.yml configuration.
     local out_dir="$(pwd)/deployment"
@@ -29,12 +29,10 @@ mk_tarball() {
     local cargo_out_dir="$(cargo_out_dir "target/$TARGET")"
 
     # Copy the vartrix binary and strip it.
-    cp "target/$TARGET/release/rg" "$staging/rg"
-    "${gcc_prefix}strip" "$staging/rg"
+    cp "target/$TARGET/release/vartrix" "$staging/vartrix"
+    "${gcc_prefix}strip" "$staging/vartrix"
     # Copy the licenses and README.
     cp {README.md,LICENSE} "$staging/"
-    # Copy documentation and man page.
-    cp {CHANGELOG.md,FAQ.md,GUIDE.md} "$staging/doc/"
 
     (cd "$tmpdir" && tar czf "$out_dir/$name.tar.gz" "$name")
     rm -rf "$tmpdir"
