@@ -10,6 +10,8 @@ extern crate terminal_size;
 extern crate serde_derive;
 #[macro_use]
 extern crate failure;
+#[macro_use]
+extern crate human_panic;
 
 use std::cmp::{max, min};
 use std::collections::HashMap;
@@ -34,6 +36,7 @@ const ALT_VALUE: i8 = 2;
 
 
 fn main() {
+    setup_panic!();  // pretty panics for users
     let scoring_help = "Type of matrix to produce. Binary means that cells with 1
 or more alt reads are given a 2, and cells with all ref reads
 are given a 1. Suitable for clustering. Coverage requires that you set
