@@ -21,6 +21,7 @@ deploy:
     secure: iiqzRaToMws53VBo3eFTF+BENO3Yj/bDzL8l3Iyoqy7nxvLU4l1hPF1qA82F+/AgLEqX14859prjwBIKKaNdoT1vxzY5EpQK3C1oNpSAvmm7lWnRQA1R+F93EC0J1XO0+WUuO3hdSAdiwqqjrx6ixEpOFa2PXlXuSMwjTBYOTTIee5cwIg406d0WuqSFS/bVB+vjVebhsh90XohaZ7C1Qzsf7mH4T4+RnFk3mVc+BtOGQ+r2qsT+50Zx6yO3VDLwSj5eAoQorGiJBWx3kkW9OulnpOwtYqhIAbLHS8ekWogsIXxxBtZmKcmbLFf1vVN5p9q86Tu0DGLTy+Y/PqHEKM8LvRoBTyPureqWP5X+QXMKHnaF3H6lby6QVFhfo7bDMOCQXeCJnfX8u6ncqJj81rGdn3s0cqnuCxtxoEdHdZVIIwxk9SbgjZy4bj+lsTjCDb8sR36qerQC+6ZgA7h4rMfvAmRSBQbEteDq4d8xDKBwio83tIFK8qIjMqFyHD1ltcPGS8RwvHeSFZGc29rLWBZtZsU+obHiQ7rPETbvFE00G8+AiIIxoSywhoQ95aIAfTmY9OJ1FZxOdN1EOTd97n5BKpkdHYZST3AQYeTxdvW2pMb3ayI2dQC4Xz6sh1yXZd+vvkzdtJdM++fxfObCwG2kpkaTqsBr4jvgxEO203A=
   file: deployment/${PROJECT_NAME}-${TRAVIS_TAG}-${TARGET}.tar.gz
   file_glob: true
+  skip_cleanup: true
   on:
     repo: 10XGenomics/vartrix
     branch: master
