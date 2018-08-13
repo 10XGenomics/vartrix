@@ -19,6 +19,7 @@ extern crate human_panic;
 use simplelog::*;
 use std::cmp::{max, min};
 use std::collections::HashMap;
+use std::process;
 use clap::{Arg, App};
 use std::fs::File;
 use std::io::prelude::*;
@@ -40,7 +41,7 @@ const ALT_VALUE: i8 = 2;
 
 
 fn main() {
-    //setup_panic!();  // pretty panics for users
+    setup_panic!();  // pretty panics for users
     let scoring_help = "Type of matrix to produce. Binary means that cells with 1
 or more alt reads are given a 2, and cells with all ref reads
 are given a 1. Suitable for clustering. Coverage requires that you set
@@ -119,7 +120,7 @@ Alt_frac will report the fraction of alt reads.".replace("\n", " ");
     let bam_file = args.value_of("bam").expect("You must provide a BAM file");
     let cell_barcodes = args.value_of("cell_barcodes").expect("You must provide a cell barcodes file");
     let out_matrix_path = args.value_of("out_matrix").expect("You must provide a path to write the out matrix");
-    let ref_matrix_path = args.value_of("ref_matrix").unwrap_or("ref.matrix");  // Why do I have to have this or?
+    let ref_matrix_path = args.value_of("ref_matrix").unwrap_or("ref.matrix");
     let padding = args.value_of("padding")
                       .unwrap_or_default()
                       .parse::<u32>()
@@ -134,20 +135,22 @@ Alt_frac will report the fraction of alt reads.".replace("\n", " ");
         "info" => LevelFilter::Info,
         "debug" => LevelFilter::Debug,
         "error" => LevelFilter::Error,
-        &_ => panic!("Log level not valid")
+        &_ => { println!("Log level not valid"); process::exit(1); }
     };
 
     let _ = SimpleLogger::init(ll, Config::default());
 
     for path in [fasta_file, vcf_file, bam_file, cell_barcodes].iter() {
         if !Path::new(&path).exists() {
-            panic!("File {} does not exist", path);
+            println!("File {} does not exist", path);
+            process::exit(1);
         }
     }
     // check for fasta index as well
     let fai = fasta_file.to_owned() + ".fai";
     if !Path::new(&fai).exists() {
-        panic!("File {} does not exist", fai);
+        println!("File {} does not exist", fai);
+        process::exit(1);
     }
 
     rayon::ThreadPoolBuilder::new().num_threads(threads).build_global().unwrap();
