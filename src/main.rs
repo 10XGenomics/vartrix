@@ -6,6 +6,9 @@ extern crate serde;
 extern crate sprs;
 extern crate rayon;
 extern crate terminal_size;
+extern crate simplelog;
+#[macro_use]
+extern crate log;
 #[macro_use]
 extern crate serde_derive;
 #[macro_use]
@@ -13,8 +16,10 @@ extern crate failure;
 #[macro_use]
 extern crate human_panic;
 
+use simplelog::*;
 use std::cmp::{max, min};
 use std::collections::HashMap;
+use std::process;
 use clap::{Arg, App};
 use std::fs::File;
 use std::io::prelude::*;
@@ -98,6 +103,11 @@ Alt_frac will report the fraction of alt reads.".replace("\n", " ");
              .value_name("OUTPUT_FILE")
              .required_if("scoring_method", "coverage")
              .help("Location to write reference Matrix Market file. Only used if --scoring-method is coverage"))
+        .arg(Arg::with_name("log_level")
+             .long("log-level")
+             .possible_values(&["info", "debug", "error"])
+             .default_value("error")
+             .help("Logging level"))
         .arg(Arg::with_name("threads")
              .long("threads")
              .value_name("INTEGER")
@@ -110,7 +120,7 @@ Alt_frac will report the fraction of alt reads.".replace("\n", " ");
     let bam_file = args.value_of("bam").expect("You must provide a BAM file");
     let cell_barcodes = args.value_of("cell_barcodes").expect("You must provide a cell barcodes file");
     let out_matrix_path = args.value_of("out_matrix").expect("You must provide a path to write the out matrix");
-    let ref_matrix_path = args.value_of("ref_matrix").unwrap_or("ref.matrix");  // Why do I have to have this or?
+    let ref_matrix_path = args.value_of("ref_matrix").unwrap_or("ref.matrix");
     let padding = args.value_of("padding")
                       .unwrap_or_default()
                       .parse::<u32>()
@@ -119,14 +129,39 @@ Alt_frac will report the fraction of alt reads.".replace("\n", " ");
     let threads = args.value_of("threads").unwrap_or_default()
                                           .parse::<usize>()
                                           .expect("Failed to convert threads to integer");
+    let ll = args.value_of("log_level").unwrap();
+
+    let ll = match ll {
+        "info" => LevelFilter::Info,
+        "debug" => LevelFilter::Debug,
+        "error" => LevelFilter::Error,
+        &_ => { println!("Log level not valid"); process::exit(1); }
+    };
+
+    let _ = SimpleLogger::init(ll, Config::default());
+
+    for path in [fasta_file, vcf_file, bam_file, cell_barcodes].iter() {
+        if !Path::new(&path).exists() {
+            println!("File {} does not exist", path);
+            process::exit(1);
+        }
+    }
+    // check for fasta index as well
+    let fai = fasta_file.to_owned() + ".fai";
+    if !Path::new(&fai).exists() {
+        println!("File {} does not exist", fai);
+        process::exit(1);
+    }
 
     rayon::ThreadPoolBuilder::new().num_threads(threads).build_global().unwrap();
+    debug!("Initialized a thread pool with {} threads", threads);
 
     let mut rdr = bcf::Reader::from_path(&vcf_file).unwrap();
     let cell_barcodes = load_barcodes(&cell_barcodes).unwrap();
 
     // need to figure out how big to make the matrix, so just read the number of lines in the VCF
     let num_vars = rdr.records().count();
+    info!("Initialized a {} variants x {} cell barcodes matrix", num_vars, cell_barcodes.len());
     let mut matrix = TriMat::new((num_vars, cell_barcodes.len()));
     let mut ref_matrix = TriMat::new((num_vars, cell_barcodes.len()));
 
@@ -143,8 +178,11 @@ Alt_frac will report the fraction of alt reads.".replace("\n", " ");
                             cell_barcodes: &cell_barcodes};
         recs.push(s);
     }
+    info!("Parsed variant VCF");
 
     let results: Vec<_> = recs.par_iter().map(evaluate_rec).collect();
+
+    info!("Finished aligning reads for all variants");
 
     for (i, scores) in results.iter() {
         match scoring_method {
@@ -172,15 +210,18 @@ Alt_frac will report the fraction of alt reads.".replace("\n", " ");
             &_ => { panic!("Scoring method is invalid") },
         };
     }
+    info!("Finished scoring alignments for all variants");
 
     let _ = write_matrix_market(&out_matrix_path as &str, &matrix).unwrap();
     if args.is_present("ref_matrix") {
         let _ = write_matrix_market(&ref_matrix_path as &str, &ref_matrix).unwrap();
+        info!("Wrote reference matrix file");
     }
 
     if args.is_present("out_variants") {
         let out_variants = args.value_of("out_variants").expect("Out variants path flag set but no value");
         write_variants(out_variants, vcf_file);
+        info!("Wrote matrix file");
     }
 }
 
@@ -220,7 +261,7 @@ pub fn load_barcodes(filename: impl AsRef<Path>) -> Result<HashMap<Vec<u8>, u32>
         let seq = l?.into_bytes();
         bc_set.insert(seq, i as u32);
     }
-
+    debug!("Loaded barcodes");
     Ok(bc_set)
 }
 
@@ -275,15 +316,22 @@ pub fn evaluate_alns(bam: &mut bam::IndexedReader,
     bam.fetch(tid, haps.locus.start, haps.locus.end)?;
     let mut scores = Vec::new();
 
+    let locus_str = format!("{}:{}-{}", haps.locus.chrom, haps.locus.start, haps.locus.end);
+
+    debug!("Evaluating record {}", locus_str);
     for _rec in bam.records() {
         let rec = _rec?;
 
         if useful_rec(haps, &rec).unwrap() == false {
+            debug!("{} skipping read {} due to not being useful", 
+                   locus_str, String::from_utf8(rec.qname().to_vec()).unwrap());
             continue;
         }
 
         let cell_index = get_cell_barcode(&rec, cell_barcodes);
         if cell_index.is_none() {
+            debug!("{} skipping read {} due to not having a cell barcode",
+                    locus_str, String::from_utf8(rec.qname().to_vec()).unwrap());
             continue;
         }
         let cell_index = cell_index.unwrap();
@@ -296,6 +344,13 @@ pub fn evaluate_alns(bam: &mut bam::IndexedReader,
         let mut aligner = banded::Aligner::new(-5, -1, score, k, w);
         let ref_alignment = aligner.local(seq, &haps.rref);
         let alt_alignment = aligner.local(seq, &haps.alt);
+
+        debug!("{} {} ref_aln:\n{}", locus_str, String::from_utf8(rec.qname().to_vec()).unwrap(),
+                ref_alignment.pretty(seq, &haps.rref));
+        debug!("{} {} alt_aln:\n{}", locus_str, String::from_utf8(rec.qname().to_vec()).unwrap(),
+                alt_alignment.pretty(seq, &haps.alt));
+        debug!("{} {} ref_score: {} alt_score: {}", locus_str, String::from_utf8(rec.qname().to_vec()).unwrap(),
+                ref_alignment.score, alt_alignment.score);
 
         scores.push((cell_index, ref_alignment.score, alt_alignment.score))
     }
