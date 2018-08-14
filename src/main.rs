@@ -160,14 +160,14 @@ Alt_frac will report the fraction of alt reads.".replace("\n", " ");
 
     for path in [fasta_file, vcf_file, bam_file, cell_barcodes].iter() {
         if !Path::new(&path).exists() {
-            println!("File {} does not exist", path);
+            error!("File {} does not exist", path);
             process::exit(1);
         }
     }
     // check for fasta index as well
     let fai = fasta_file.to_owned() + ".fai";
     if !Path::new(&fai).exists() {
-        println!("File {} does not exist", fai);
+        error!("File {} does not exist", fai);
         process::exit(1);
     }
 
