@@ -26,6 +26,14 @@ At this point, all multi-allelic sites are ignored. They will still be a column 
 
 `--threads`: The number of parallel threads to use.
 
+`--log-level`: One of `info`, `error` or `debug`. Increasing levels of logging. `Debug` mode is extremely verbose and will report on the fate of every single read. DEFAULT: error.
+
+`--mapq`: The minimum mapping quality of reads to be considered. Default: 0.
+
+`--primary-alignments`: Boolean flag -- consider only primary alignments? Default: false.
+
+`--no-duplicates`: Boolean flag -- ignore alignments marked as duplicates? Take care when turning this on with scRNA-seq data, as duplicates are marked in that pipeline for every extra read sharing the same UMI/CB pair, which will result in most variant data being lost. Default: false.
+
 
 ### License
 VarTrix is distributed under the MIT license.
