@@ -38,14 +38,16 @@ use terminal_size::{Width, terminal_size};
 
 const REF_VALUE: i8 = 1;
 const ALT_VALUE: i8 = 2;
+const REF_ALT_VALUE: i8 = 3;
+const MIN_SCORE: i32 = 25;
+const UNKNOWN_VALUE: i8 = -1;
 
 
 fn main() {
     setup_panic!();  // pretty panics for users
-    let scoring_help = "Type of matrix to produce. Binary means that cells with 1
-or more alt reads are given a 2, and cells with all ref reads
-are given a 1. Suitable for clustering. Coverage requires that you set
---ref-matrix to store the second matrix in.
+    let scoring_help = "Type of matrix to produce. Consensus means that cells with both ref and alt
+reads are given a 3, alt only reads a 2, and ref only reads a 1. Suitable for clustering. 
+Coverage requires that you set --ref-matrix to store the second matrix in.
 Alt_frac will report the fraction of alt reads.".replace("\n", " ");
     let args = App::new("vartrix")
         .set_term_width(if let Some((Width(w), _)) = terminal_size() { w as usize } else { 120 })
@@ -95,8 +97,8 @@ Alt_frac will report the fraction of alt reads.".replace("\n", " ");
         .arg(Arg::with_name("scoring_method")
              .short("s")
              .long("scoring-method")
-             .possible_values(&["binary", "coverage", "alt_frac"])
-             .default_value("binary")
+             .possible_values(&["consensus", "coverage", "alt_frac"])
+             .default_value("consensus")
              .help(&scoring_help))
         .arg(Arg::with_name("ref_matrix")
              .long("ref-matrix")
@@ -192,8 +194,8 @@ Alt_frac will report the fraction of alt reads.".replace("\n", " ");
                     matrix.add_triplet(*i, *j as usize, r);
                 }
             },
-            "binary" => { 
-                let result = binary_scoring(&scores); 
+            "consensus" => { 
+                let result = consensus_scoring(&scores, *i); 
                 for (j, r) in result {
                     matrix.add_triplet(*i, *j as usize, r);
                 }
@@ -431,34 +433,42 @@ pub fn evaluate_rec<'a>(rh: &RecHolder) -> (usize, Vec<(u32, i32, i32)>) {
 
 
 fn parse_scores(scores: &Vec<(u32, i32, i32)>) -> HashMap<&u32, Vec<&i8>> {
-    let min_score = 25;
     let mut parsed_scores = HashMap::new();
     for (bc, ref_score, alt_score) in scores.into_iter() {
-        if (ref_score < &min_score) & (alt_score < &min_score) {
-            continue;
-        } else if ref_score == alt_score {
+        if (ref_score < &&MIN_SCORE) & (alt_score < &&MIN_SCORE) {
             continue;
         }
-        
-        if ref_score > alt_score {
+        else if ref_score > alt_score {
             parsed_scores.entry(bc).or_insert(Vec::new()).push(&REF_VALUE);
         } else if alt_score > ref_score {
             parsed_scores.entry(bc).or_insert(Vec::new()).push(&ALT_VALUE);
+        }
+        else { // ref_score == alt_score
+            parsed_scores.entry(bc).or_insert(Vec::new()).push(&UNKNOWN_VALUE);
         }
     }
     parsed_scores
 }
 
 
-pub fn binary_scoring(scores: &Vec<(u32, i32, i32)>) -> Vec<(&u32, f64)> {
+pub fn consensus_scoring(scores: &Vec<(u32, i32, i32)>, i: usize) -> Vec<(&u32, f64)> {
     let parsed_scores = parse_scores(scores);
 
     let mut result = Vec::new();
     for (bc, r) in parsed_scores.into_iter() {
-        if r.contains(&&ALT_VALUE) {
+        let ref_count = r.iter().filter(|&x| *x == &REF_VALUE).count();
+        let alt_count = r.iter().filter(|&x| *x == &ALT_VALUE).count();
+        let unk_count = r.iter().filter(|&x| *x == &UNKNOWN_VALUE).count();
+        if unk_count > 0 {
+            info!("Variant at index {} has unknown reads at barcode {}. Check this locus manually", i, bc);
+        }
+        if (ref_count > 0) & (alt_count > 0) {
+            result.push((bc, REF_ALT_VALUE as f64));
+        }
+        else if alt_count > 0 {
             result.push((bc, ALT_VALUE as f64));
         }
-        else if r.contains(&&REF_VALUE) {
+        else if ref_count > 0 {
             result.push((bc, REF_VALUE as f64));
         }
     }
@@ -472,14 +482,16 @@ pub fn alt_frac(scores: &Vec<(u32, i32, i32)>) -> Vec<(&u32, f64)> {
     for (bc, r) in parsed_scores.into_iter() {
         let mut ref_count = 0;
         let mut alt_count = 0;
+        let mut unk_count = 0;
         for x in r.iter() {
             match x {
                 &&REF_VALUE => ref_count += 1,
                 &&ALT_VALUE => alt_count += 1,
+                &&UNKNOWN_VALUE => unk_count += 1,
                 &&_ => panic!("How did this happen")
             }
         }
-        let alt_frac = alt_count as f64 / (ref_count as f64 + alt_count as f64);
+        let alt_frac = alt_count as f64 / (ref_count as f64 + alt_count as f64 + unk_count as f64);
         result.push((bc, alt_frac));
     }
     result
