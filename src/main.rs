@@ -460,7 +460,7 @@ pub fn consensus_scoring(scores: &Vec<(u32, i32, i32)>, i: usize) -> Vec<(&u32, 
         let alt_count = r.iter().filter(|&x| *x == &ALT_VALUE).count();
         let unk_count = r.iter().filter(|&x| *x == &UNKNOWN_VALUE).count();
         if unk_count > 0 {
-            info!("Variant at index {} has unknown reads at barcode {}. Check this locus manually", i, bc);
+            info!("Variant at index {} has unknown reads at barcode index {}. Check this locus manually", i, bc);
         }
         if (ref_count > 0) & (alt_count > 0) {
             result.push((bc, REF_ALT_VALUE as f64));
@@ -480,36 +480,22 @@ pub fn alt_frac(scores: &Vec<(u32, i32, i32)>) -> Vec<(&u32, f64)> {
     let parsed_scores = parse_scores(scores);
     let mut result = Vec::new();
     for (bc, r) in parsed_scores.into_iter() {
-        let mut ref_count = 0;
-        let mut alt_count = 0;
-        let mut unk_count = 0;
-        for x in r.iter() {
-            match x {
-                &&REF_VALUE => ref_count += 1,
-                &&ALT_VALUE => alt_count += 1,
-                &&UNKNOWN_VALUE => unk_count += 1,
-                &&_ => panic!("How did this happen")
-            }
-        }
+        let ref_count = r.iter().filter(|&x| *x == &REF_VALUE).count();
+        let alt_count = r.iter().filter(|&x| *x == &ALT_VALUE).count();
+        let unk_count = r.iter().filter(|&x| *x == &UNKNOWN_VALUE).count();
         let alt_frac = alt_count as f64 / (ref_count as f64 + alt_count as f64 + unk_count as f64);
         result.push((bc, alt_frac));
     }
     result
 }
 
+
 pub fn coverage(scores: &Vec<(u32, i32, i32)>) -> (Vec<(&u32, f64)>, Vec<(&u32, f64)>) {
     let parsed_scores = parse_scores(scores);
     let mut result = (Vec::new(), Vec::new());
     for (bc, r) in parsed_scores.into_iter() {
-        let mut ref_count = 0;
-        let mut alt_count = 0;
-        for x in r.iter() {
-            match x {
-                &&REF_VALUE => ref_count += 1,
-                &&ALT_VALUE => alt_count += 1,
-                &&_ => panic!("How did this happen")
-            }
-        }
+        let ref_count = r.iter().filter(|&x| *x == &REF_VALUE).count();
+        let alt_count = r.iter().filter(|&x| *x == &ALT_VALUE).count();
         result.0.push((bc, alt_count as f64));
         result.1.push((bc, ref_count as f64));
     }
