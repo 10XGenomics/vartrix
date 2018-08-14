@@ -115,6 +115,17 @@ Alt_frac will report the fraction of alt reads.".replace("\n", " ");
              .value_name("INTEGER")
              .default_value("1")
              .help("Number of parallel threads to use"))
+        .arg(Arg::with_name("mapq")
+             .long("mapq")
+             .value_name("INTEGER")
+             .default_value("0")
+             .help("Minimum read mapping quality to consider"))
+        .arg(Arg::with_name("primary_alignments")
+             .long("primary-alignments")
+             .help("Use primary alignments only"))
+        .arg(Arg::with_name("no_duplicates")
+             .long("no-duplicates")
+             .help("Do not consider duplicate alignments"))
         .get_matches();
 
     let fasta_file = args.value_of("fasta").expect("You must supply a fasta file");
@@ -131,6 +142,11 @@ Alt_frac will report the fraction of alt reads.".replace("\n", " ");
     let threads = args.value_of("threads").unwrap_or_default()
                                           .parse::<usize>()
                                           .expect("Failed to convert threads to integer");
+    let mapq = args.value_of("mapq").unwrap_or_default()
+                                    .parse::<u8>()
+                                    .expect("Failed to convert mapq to integer");
+    let primary_only = args.is_present("primary_alignments");
+    let duplicates = args.is_present("no_duplicates");
     let ll = args.value_of("log_level").unwrap();
 
     let ll = match ll {
@@ -182,7 +198,8 @@ Alt_frac will report the fraction of alt reads.".replace("\n", " ");
     }
     info!("Parsed variant VCF");
 
-    let results: Vec<_> = recs.par_iter().map(evaluate_rec).collect();
+    let results: Vec<_> = recs.par_iter().map(|rec| 
+    { evaluate_rec(rec, &mapq, &primary_only, &duplicates) }).collect();
 
     info!("Finished aligning reads for all variants");
 
@@ -253,6 +270,34 @@ pub struct VariantHaps {
 }
 
 
+pub fn evaluate_rec<'a>(rh: &RecHolder, 
+                        mapq: &u8, 
+                        primary: &bool, 
+                        duplicates: &bool) 
+                            -> (usize, Vec<(u32, i32, i32)>) {
+    let mut bam = bam::IndexedReader::from_path(rh.bam_file).unwrap();
+    let chr = String::from_utf8(rh.rec.header().rid2name(rh.rec.rid().unwrap()).to_vec()).unwrap();
+
+    let alleles = rh.rec.alleles();
+
+    let locus = Locus { chrom: chr.to_string(), 
+                        start: rh.rec.pos(), 
+                        end: rh.rec.pos() + alleles[0].len() as u32 };
+
+    let mut fa = fasta::IndexedReader::from_file(&rh.fasta_file).unwrap();
+    let (rref, alt) = construct_haplotypes(&mut fa, &locus, alleles[1], rh.padding);
+
+    let haps = VariantHaps {
+        locus: Locus { chrom: chr, start: locus.start, end: locus.end },
+        rref,
+        alt
+    };
+
+    let scores = evaluate_alns(&mut bam, &haps, &rh.cell_barcodes, mapq, primary, duplicates).unwrap();
+    (rh.i, scores)
+}
+
+
 pub fn load_barcodes(filename: impl AsRef<Path>) -> Result<HashMap<Vec<u8>, u32>, Error> {
     let r = File::open(filename.as_ref())?;
     let reader = BufReader::with_capacity(32 * 1024, r);
@@ -307,7 +352,10 @@ pub fn useful_rec(haps: &VariantHaps, rec: &bam::Record) -> Result<bool, Error> 
 
 pub fn evaluate_alns(bam: &mut bam::IndexedReader, 
                     haps: &VariantHaps, 
-                    cell_barcodes: &HashMap<Vec<u8>, u32>) 
+                    cell_barcodes: &HashMap<Vec<u8>, u32>,
+                    mapq: &u8,
+                    primary: &bool,
+                    duplicates: &bool)
                         -> Result<Vec<(u32, i32, i32)>, Error> {
     // loop over all alignments in the region of interest
     // if the alignments are useful (aligned over this region)
@@ -324,7 +372,22 @@ pub fn evaluate_alns(bam: &mut bam::IndexedReader,
     for _rec in bam.records() {
         let rec = _rec?;
 
-        if useful_rec(haps, &rec).unwrap() == false {
+        if rec.mapq() < *mapq {
+            debug!("{} skipping read {} due to low mapping quality", 
+                   locus_str, String::from_utf8(rec.qname().to_vec()).unwrap());
+            continue;
+        }
+        else if primary & (rec.is_secondary() | rec.is_supplementary()) {
+            debug!("{} skipping read {} due to not being the primary alignment", 
+                   locus_str, String::from_utf8(rec.qname().to_vec()).unwrap());
+            continue;
+        }
+        else if duplicates & rec.is_duplicate() {
+            debug!("{} skipping read {} due to not being useful", 
+                   locus_str, String::from_utf8(rec.qname().to_vec()).unwrap());
+            continue
+        }
+        else if useful_rec(haps, &rec).unwrap() == false {
             debug!("{} skipping read {} due to not being useful", 
                    locus_str, String::from_utf8(rec.qname().to_vec()).unwrap());
             continue;
@@ -405,30 +468,6 @@ pub fn construct_haplotypes(fa: &mut fasta::IndexedReader<File>,
 
     let (ref_hap, _) = read_locus(fa, locus, padding, padding);
     (ref_hap, alt_hap)
-}
-
-
-pub fn evaluate_rec<'a>(rh: &RecHolder) -> (usize, Vec<(u32, i32, i32)>) {
-    let mut bam = bam::IndexedReader::from_path(rh.bam_file).unwrap();
-    let chr = String::from_utf8(rh.rec.header().rid2name(rh.rec.rid().unwrap()).to_vec()).unwrap();
-
-    let alleles = rh.rec.alleles();
-
-    let locus = Locus { chrom: chr.to_string(), 
-                        start: rh.rec.pos(), 
-                        end: rh.rec.pos() + alleles[0].len() as u32 };
-
-    let mut fa = fasta::IndexedReader::from_file(&rh.fasta_file).unwrap();
-    let (rref, alt) = construct_haplotypes(&mut fa, &locus, alleles[1], rh.padding);
-
-    let haps = VariantHaps {
-        locus: Locus { chrom: chr, start: locus.start, end: locus.end },
-        rref,
-        alt
-    };
-
-    let scores = evaluate_alns(&mut bam, &haps, &rh.cell_barcodes).unwrap();
-    (rh.i, scores)
 }
 
 
