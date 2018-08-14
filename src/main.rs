@@ -498,8 +498,8 @@ pub fn consensus_scoring(scores: &Vec<(u32, i32, i32)>, i: usize) -> Vec<(&u32, 
         let ref_count = r.iter().filter(|&x| *x == &REF_VALUE).count();
         let alt_count = r.iter().filter(|&x| *x == &ALT_VALUE).count();
         let unk_count = r.iter().filter(|&x| *x == &UNKNOWN_VALUE).count();
-        if unk_count > 0 {
-            info!("Variant at index {} has unknown reads at barcode index {}. Check this locus manually", i, bc);
+        if unk_count > 1 {
+            info!("Variant at index {} has multiple unknown reads at barcode index {}. Check this locus manually", i, bc);
         }
         if (ref_count > 0) & (alt_count > 0) {
             result.push((bc, REF_ALT_VALUE as f64));
