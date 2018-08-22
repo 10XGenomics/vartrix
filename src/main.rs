@@ -18,7 +18,7 @@ extern crate human_panic;
 
 use simplelog::*;
 use std::cmp::{max, min};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::process;
 use clap::{Arg, App};
 use std::fs::File;
@@ -171,9 +171,6 @@ Alt_frac will report the fraction of alt reads.".replace("\n", " ");
         process::exit(1);
     }
 
-    rayon::ThreadPoolBuilder::new().num_threads(threads).build_global().unwrap();
-    debug!("Initialized a thread pool with {} threads", threads);
-
     let mut rdr = bcf::Reader::from_path(&vcf_file).unwrap();
     let cell_barcodes = load_barcodes(&cell_barcodes).unwrap();
 
@@ -196,7 +193,13 @@ Alt_frac will report the fraction of alt reads.".replace("\n", " ");
                             cell_barcodes: &cell_barcodes};
         recs.push(s);
     }
+
+    validate_inputs(&recs, &bam_file, &fasta_file);
+
     info!("Parsed variant VCF");
+
+    rayon::ThreadPoolBuilder::new().num_threads(threads).build_global().unwrap();
+    debug!("Initialized a thread pool with {} threads", threads);
 
     let results: Vec<_> = recs.par_iter().map(|rec| 
     { evaluate_rec(rec, &mapq, &primary_only, &duplicates) }).collect();
@@ -267,6 +270,37 @@ pub struct VariantHaps {
     locus: Locus,
     rref: Vec<u8>,
     alt: Vec<u8>,
+}
+
+
+pub fn validate_inputs(recs: &std::vec::Vec<RecHolder<'_>>, bam_file: &str, fasta_file: &str) {
+    // generate a set of all chromosome names seen in the records and then make sure
+    // that these can be found in the FASTA as well as the BAM
+    debug!("Checking VCF records for chromosome names that match those in BAM and FASTA");
+    let fai = fasta_file.to_owned() + ".fai";
+    let mut fa_seqs = HashSet::new();
+    for fa_seq in fasta::Index::from_file(&fai).unwrap().sequences() {
+        fa_seqs.insert(fa_seq.name);
+    }
+
+    let bam = bam::IndexedReader::from_path(&bam_file).unwrap();
+    let header = bam.header();
+    let mut bam_seqs = HashSet::new();
+    for bam_seq in header.target_names() {
+        bam_seqs.insert(String::from_utf8(bam_seq.to_vec()).unwrap());
+    }
+
+    for rh in recs {
+        let chr = String::from_utf8(rh.rec.header().rid2name(rh.rec.rid().unwrap()).to_vec()).unwrap();
+        if !fa_seqs.contains(&chr) {
+            error!("Sequence {} not seen in FASTA", chr);
+            process::exit(1);
+        }
+        else if !bam_seqs.contains(&chr) {
+            error!("Sequence {} not seen in BAM", chr);
+            process::exit(1);
+        }
+    }
 }
 
 
