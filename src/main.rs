@@ -383,7 +383,7 @@ pub fn evaluate_alns(bam: &mut bam::IndexedReader,
             continue;
         }
         else if duplicates & rec.is_duplicate() {
-            debug!("{} skipping read {} due to not being useful", 
+            debug!("{} skipping read {} due to being a duplicate", 
                    locus_str, String::from_utf8(rec.qname().to_vec()).unwrap());
             continue
         }
@@ -467,6 +467,9 @@ pub fn construct_haplotypes(fa: &mut fasta::IndexedReader<File>,
     };
 
     let (ref_hap, _) = read_locus(fa, locus, padding, padding);
+    debug!("{}:{}-{} -- ref: {} alt: {}", locus.chrom, locus.start, locus.end, 
+                                          String::from_utf8(ref_hap.clone()).unwrap(), 
+                                          String::from_utf8(alt_hap.clone()).unwrap());
     (ref_hap, alt_hap)
 }
 
