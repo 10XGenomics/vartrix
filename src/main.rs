@@ -164,10 +164,16 @@ Alt_frac will report the fraction of alt reads.".replace("\n", " ");
             process::exit(1);
         }
     }
-    // check for fasta index as well
+
+    // check for indices as well
     let fai = fasta_file.to_owned() + ".fai";
     if !Path::new(&fai).exists() {
         error!("File {} does not exist", fai);
+        process::exit(1);
+    }
+    let bai = bam_file.to_owned() + ".bai";
+    if !Path::new(&bai).exists() {
+        error!("File {} does not exist", bai);
         process::exit(1);
     }
 
