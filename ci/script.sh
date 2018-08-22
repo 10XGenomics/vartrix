@@ -23,6 +23,9 @@ main() {
     # sanity check the file type
     file target/"$TARGET"/debug/vartrix
 
+    # Run tests
+    cargo test --target "$TARGET" --verbose
+
 }
 
 main
