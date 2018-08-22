@@ -6,6 +6,7 @@ extern crate serde;
 extern crate sprs;
 extern crate rayon;
 extern crate terminal_size;
+extern crate tempfile;
 extern crate simplelog;
 #[macro_use]
 extern crate log;
@@ -42,13 +43,7 @@ const REF_ALT_VALUE: i8 = 3;
 const MIN_SCORE: i32 = 25;
 const UNKNOWN_VALUE: i8 = -1;
 
-
-fn main() {
-    setup_panic!();  // pretty panics for users
-    let scoring_help = "Type of matrix to produce. Consensus means that cells with both ref and alt
-reads are given a 3, alt only reads a 2, and ref only reads a 1. Suitable for clustering. 
-Coverage requires that you set --ref-matrix to store the second matrix in.
-Alt_frac will report the fraction of alt reads.".replace("\n", " ");
+fn get_args() -> clap::App<'static, 'static> {
     let args = App::new("vartrix")
         .set_term_width(if let Some((Width(w), _)) = terminal_size() { w as usize } else { 120 })
         .version("0.1")
@@ -99,7 +94,7 @@ Alt_frac will report the fraction of alt reads.".replace("\n", " ");
              .long("scoring-method")
              .possible_values(&["consensus", "coverage", "alt_frac"])
              .default_value("consensus")
-             .help(&scoring_help))
+             .help("Type of matrix to produce. Consensus means that cells with both ref and alt reads are given a 3, alt only reads a 2, and ref only reads a 1. Suitable for clustering.  Coverage requires that you set --ref-matrix to store the second matrix in. Alt_frac will report the fraction of alt reads."))
         .arg(Arg::with_name("ref_matrix")
              .long("ref-matrix")
              .value_name("OUTPUT_FILE")
@@ -125,9 +120,23 @@ Alt_frac will report the fraction of alt reads.".replace("\n", " ");
              .help("Use primary alignments only"))
         .arg(Arg::with_name("no_duplicates")
              .long("no-duplicates")
-             .help("Do not consider duplicate alignments"))
-        .get_matches();
+             .help("Do not consider duplicate alignments"));
+        args
+}
 
+
+fn main() {
+    setup_panic!();  // pretty panics for users
+    let mut cli_args = Vec::new();
+    for arg in std::env::args_os() {
+        cli_args.push(arg.into_string().unwrap());
+    }
+    _main(cli_args);
+}
+
+// constructing a _main allows for us to run regression tests way more easily
+fn _main(cli_args: Vec<String>) {
+    let args = get_args().get_matches_from(cli_args);
     let fasta_file = args.value_of("fasta").expect("You must supply a fasta file");
     let vcf_file = args.value_of("vcf").expect("You must supply a VCF file");
     let bam_file = args.value_of("bam").expect("You must provide a BAM file");
@@ -204,7 +213,7 @@ Alt_frac will report the fraction of alt reads.".replace("\n", " ");
 
     info!("Parsed variant VCF");
 
-    rayon::ThreadPoolBuilder::new().num_threads(threads).build_global().unwrap();
+    let _pool = rayon::ThreadPoolBuilder::new().num_threads(threads).build().unwrap();
     debug!("Initialized a thread pool with {} threads", threads);
 
     let results: Vec<_> = recs.par_iter().map(|rec| 
@@ -596,4 +605,76 @@ pub fn write_variants(out_variants: &str, vcf_file: &str) {
         let line = format!("{}_{}\n", chr, pos).into_bytes();
         let _ = of.write_all(&line).unwrap();
     }
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::tempdir;
+    use sprs::io::read_matrix_market;
+    // the idea here is to perform regression testing by running the full main() function
+    // against the pre-evaluated test dataset. I have previously calculated a hash of the
+    // output matrix in all of the standard operating modes. I have stored these hashes
+    // and now run the program in each operating mode to ensure the output has not changed
+
+    #[test]
+    fn test_consensus_matrix() {
+        let mut cmds = Vec::new();
+        let tmp_dir = tempdir().unwrap();
+        let out_file = tmp_dir.path().join("result.mtx");
+        let out_file = out_file.to_str().unwrap();
+        for l in &["vartrix", "-v", "test/test.vcf", "-b", "test/test.bam",
+                   "-f", "test/test.fa", "-c", "test/barcodes.tsv",
+                   "-o", out_file] {
+            cmds.push(l.to_string());
+        }
+        _main(cmds);
+
+        let seen_mat: TriMat<usize> = read_matrix_market(out_file).unwrap();
+        let expected_mat: TriMat<usize> = read_matrix_market("test/test_consensus.mtx").unwrap();
+        assert_eq!(seen_mat.to_csr(), expected_mat.to_csr());
+    }
+
+    #[test]
+    fn test_frac_matrix() {
+        let mut cmds = Vec::new();
+        let tmp_dir = tempdir().unwrap();
+        let out_file = tmp_dir.path().join("result.mtx");
+        let out_file = out_file.to_str().unwrap();
+        for l in &["vartrix", "-v", "test/test.vcf", "-b", "test/test.bam",
+                   "-f", "test/test.fa", "-c", "test/barcodes.tsv",
+                   "-o", out_file, "-s", "alt_frac"] {
+            cmds.push(l.to_string());
+        }
+        _main(cmds);
+
+        let seen_mat: TriMat<usize> = read_matrix_market(out_file).unwrap();
+        let expected_mat: TriMat<usize> = read_matrix_market("test/test_frac.mtx").unwrap();
+        assert_eq!(seen_mat.to_csr(), expected_mat.to_csr());
+    }
+
+    #[test]
+    fn test_coverage_matrices() {
+        let mut cmds = Vec::new();
+        let tmp_dir = tempdir().unwrap();
+        let out_file = tmp_dir.path().join("result.mtx");
+        let out_file = out_file.to_str().unwrap();
+        let out_ref = tmp_dir.path().join("result_ref.mtx");
+        let out_ref = out_ref.to_str().unwrap();
+        for l in &["vartrix", "-v", "test/test.vcf", "-b", "test/test.bam",
+                   "-f", "test/test.fa", "-c", "test/barcodes.tsv",
+                   "-o", out_file, "-s", "coverage", "--ref-matrix", out_ref] {
+            cmds.push(l.to_string());
+        }
+        _main(cmds);
+
+        let seen_mat: TriMat<usize> = read_matrix_market(out_file).unwrap();
+        let expected_mat: TriMat<usize> = read_matrix_market("test/test_coverage.mtx").unwrap();
+        assert_eq!(seen_mat.to_csr(), expected_mat.to_csr());
+        let seen_mat: TriMat<usize> = read_matrix_market(out_ref).unwrap();
+        let expected_mat: TriMat<usize> = read_matrix_market("test/test_coverage_ref.mtx").unwrap();
+        assert_eq!(seen_mat.to_csr(), expected_mat.to_csr());
+    }
+
 }
