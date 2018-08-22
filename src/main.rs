@@ -207,7 +207,7 @@ fn _main(cli_args: Vec<String>) {
 
     info!("Parsed variant VCF");
 
-    rayon::ThreadPoolBuilder::new().num_threads(threads).build_global().unwrap();
+    let _pool = rayon::ThreadPoolBuilder::new().num_threads(threads).build().unwrap();
     debug!("Initialized a thread pool with {} threads", threads);
 
     let results: Vec<_> = recs.par_iter().map(|rec| 
@@ -627,6 +627,47 @@ mod tests {
 
         let seen_mat: TriMat<usize> = read_matrix_market(out_file).unwrap();
         let expected_mat: TriMat<usize> = read_matrix_market("test/test_consensus.mtx").unwrap();
+        assert_eq!(seen_mat.to_csr(), expected_mat.to_csr());
+    }
+
+    #[test]
+    fn test_frac_matrix() {
+        let mut cmds = Vec::new();
+        let tmp_dir = tempdir().unwrap();
+        let out_file = tmp_dir.path().join("result.mtx");
+        let out_file = out_file.to_str().unwrap();
+        for l in &["vartrix", "-v", "test/test.vcf", "-b", "test/test.bam",
+                   "-f", "test/test.fa", "-c", "test/barcodes.tsv",
+                   "-o", out_file, "-s", "alt_frac"] {
+            cmds.push(l.to_string());
+        }
+        _main(cmds);
+
+        let seen_mat: TriMat<usize> = read_matrix_market(out_file).unwrap();
+        let expected_mat: TriMat<usize> = read_matrix_market("test/test_frac.mtx").unwrap();
+        assert_eq!(seen_mat.to_csr(), expected_mat.to_csr());
+    }
+
+    #[test]
+    fn test_coverage_matrices() {
+        let mut cmds = Vec::new();
+        let tmp_dir = tempdir().unwrap();
+        let out_file = tmp_dir.path().join("result.mtx");
+        let out_file = out_file.to_str().unwrap();
+        let out_ref = tmp_dir.path().join("result_ref.mtx");
+        let out_ref = out_ref.to_str().unwrap();
+        for l in &["vartrix", "-v", "test/test.vcf", "-b", "test/test.bam",
+                   "-f", "test/test.fa", "-c", "test/barcodes.tsv",
+                   "-o", out_file, "-s", "coverage", "--ref-matrix", out_ref] {
+            cmds.push(l.to_string());
+        }
+        _main(cmds);
+
+        let seen_mat: TriMat<usize> = read_matrix_market(out_file).unwrap();
+        let expected_mat: TriMat<usize> = read_matrix_market("test/test_coverage.mtx").unwrap();
+        assert_eq!(seen_mat.to_csr(), expected_mat.to_csr());
+        let seen_mat: TriMat<usize> = read_matrix_market(out_ref).unwrap();
+        let expected_mat: TriMat<usize> = read_matrix_market("test/test_coverage_ref.mtx").unwrap();
         assert_eq!(seen_mat.to_csr(), expected_mat.to_csr());
     }
 
