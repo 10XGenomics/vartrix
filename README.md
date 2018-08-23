@@ -4,6 +4,13 @@ VarTrix is a tool for extracting single-cell variant information from single-cel
 
 At this point, all multi-allelic sites are ignored. They will still be a column in the final matrix to maintain ordering, but all values will be empty.
 
+### Installation
+
+VarTrix has automatically generated downloadable binaries for generic linux and Mac OSX under the [releases page](https://github.com/10XGenomics/vartrix/releases). The linux binaries will work on [any of our supported OSes](https://support.10xgenomics.com/os-support). 
+
+### Compiling from source
+VarTrix is standard Rust executable project, that works with stable Rust >=1.13. Install Rust through the standard channels, then type `cargo build --release`. The executable will appear at `target/release/vartrix`. As usual it's important to use a release build to get good performance.
+
 ### Usage
 
 `--vcf (-v)`: Input VCF formatted variants to be assigned. REQUIRED.
@@ -12,7 +19,7 @@ At this point, all multi-allelic sites are ignored. They will still be a column 
 
 `--fasta (-f)`: A FASTA file for the reference genome used in the BAM. Must have a index file. REQUIRED.
 
-`--cell-barcodes (-c)`: A cell barcodes file as produced by CellRanger that defines which barcodes were called as cells. One barcode per line. In CellRanger runs, this can be found in the sub-folder `outs/filtered_gene_bc_matrices_mex/${refGenome}/barcodes.tsv`. REQUIRED.
+`--cell-barcodes (-c)`: A cell barcodes file as produced by CellRanger that defines which barcodes were called as cells. One barcode per line. In CellRanger runs, this can be found in the sub-folder `outs/filtered_gene_bc_matrices_mex/${refGenome}/barcodes.tsv` where `${refGenome}` is the name of the reference genome used in your CellRanger run. REQUIRED.
 
 `--out-matrix (-o)`: The path to write a Market Matrix format matrix out to. This is the same sparse matrix format used by CellRanger, and can be loaded into external tools like Seraut. REQUIRED.
 
@@ -36,4 +43,4 @@ At this point, all multi-allelic sites are ignored. They will still be a column 
 
 
 ### License
-VarTrix is distributed under the MIT license.
+VarTrix is licensed under the [MIT license](http://opensource.org/licenses/MIT). This project may not be copied, modified, or distributed except according to those terms.
