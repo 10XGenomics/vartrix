@@ -4,6 +4,15 @@ VarTrix is a tool for extracting single-cell variant information from single-cel
 
 At this point, all multi-allelic sites are ignored. They will still be a column in the final matrix to maintain ordering, but all values will be empty.
 
+### Use cases
+VarTrix is useful for evaluating heterogeneity of single cell datasets, including tumor samples and cell lines. 
+
+#### scRNA-seq
+Allele specific expression in tumor samples can lead to strong correlations between the presence of a specific expressed variant and expression-based clustering. Overlaying the SNV information with expression clustering can lead to new insight in to the cause of a specific cancer and to the accumulation of mutations that may lead to relapse or drug resistance.
+
+#### scDNA-seq
+Assignment of variants in scDNA data can improve understanding of tumor and cell line heterogeneity. Copy number expansion in tumor cells or chromothripsis in cell lines can lead to specific variants being associated with subclonal populations. Similar to scRNA-seq datasets, variant assignment to specific cells can be overlaid with copy number based clustering.
+
 ### Installation
 
 VarTrix has automatically generated downloadable binaries for generic linux and Mac OSX under the [releases page](https://github.com/10XGenomics/vartrix/releases). The linux binaries will work on [any of our supported OSes](https://support.10xgenomics.com/os-support). 
@@ -40,6 +49,13 @@ VarTrix is standard Rust executable project, that works with stable Rust >=1.13.
 `--primary-alignments`: Boolean flag -- consider only primary alignments? Default: false.
 
 `--no-duplicates`: Boolean flag -- ignore alignments marked as duplicates? Take care when turning this on with scRNA-seq data, as duplicates are marked in that pipeline for every extra read sharing the same UMI/CB pair, which will result in most variant data being lost. Default: false.
+
+
+### Log level considerations
+The default logging level will only report on errors. The next log level, `info`, will report on basic information like the number of variants and barcodes seen, as well as reporting on sites that are problematic in consensus mode. In `debug` mode, the constructed haplotypes and alignments for every single read will be reported. For large datasets, this can produce an extremely large log file.
+
+#### Problematic sites
+With the log level set to `info` or higher, upon the final scoring step, VarTrix will report on barcode/variant pairs that are inconsistent for potential manual inspection. This situation arises when multiple reads for a given barcode/variant combination have equal alignment scores to both the ref and alt haplotype. The most common cause for this is that this location is a multi-allelic site that was not reported as such in the VCF. This is most often seen in cancer samples with large copy number expansions. In these cases, VarTrix will not consider these reads when populating the matrix.
 
 
 ### License
