@@ -222,27 +222,50 @@ fn _main(cli_args: Vec<String>) {
     let _pool = rayon::ThreadPoolBuilder::new().num_threads(threads).build().unwrap();
     debug!("Initialized a thread pool with {} threads", threads);
 
-    let results: Vec<_> = recs.par_iter().map(|rec| 
-    { evaluate_rec(rec, &mapq, &primary_only, &duplicates) }).collect();
+    let results: Vec<_> = recs.par_iter()
+                              .map(|rec| { 
+                                  evaluate_rec(rec, &mapq, &primary_only, &duplicates).unwrap() 
+                                  } )
+                              .collect();
 
-    info!("Finished aligning reads for all variants");
+    debug!("Finished aligning reads for all variants");
 
-    for (i, scores) in results.iter() {
+    // create a new Metrics to concatenate all of the individual sub-Metrics on to
+    let mut metrics = Metrics {
+        num_reads: 0,
+        num_low_mapq: 0,
+        num_non_primary: 0,
+        num_duplicates: 0,
+        num_not_cell_bc: 0,
+        num_not_useful: 0,
+    };
+
+    fn add_metrics(metrics: &mut Metrics, m: &Metrics) {
+        metrics.num_reads += m.num_reads;
+        metrics.num_low_mapq += m.num_low_mapq;
+        metrics.num_non_primary += m.num_non_primary;
+        metrics.num_duplicates += m.num_duplicates;
+        metrics.num_not_cell_bc += m.num_not_cell_bc;
+        metrics.num_not_useful += m.num_not_useful;
+    }
+
+    for (i, results) in results.iter() {
+        add_metrics(&mut metrics, &results.metrics);
         match scoring_method {
             "alt_frac" => { 
-                let result = alt_frac(&scores); 
+                let result = alt_frac(&results, *i); 
                 for (j, r) in result {
                     matrix.add_triplet(*i, *j as usize, r);
                 }
             },
             "consensus" => { 
-                let result = consensus_scoring(&scores, *i); 
+                let result = consensus_scoring(&results, *i); 
                 for (j, r) in result {
                     matrix.add_triplet(*i, *j as usize, r);
                 }
             },
             "coverage" => { 
-                let result = coverage(&scores); 
+                let result = coverage(&results, *i); 
                 for (j, r) in result.0 {
                     matrix.add_triplet(*i, *j as usize, r);
                 }
@@ -253,7 +276,13 @@ fn _main(cli_args: Vec<String>) {
             &_ => { panic!("Scoring method is invalid") },
         };
     }
-    info!("Finished scoring alignments for all variants");
+    debug!("Finished scoring alignments for all variants");
+    info!("Number of alignments evaluated: {}", metrics.num_reads);
+    info!("Number of alignments skipped due to low mapping quality: {}", metrics.num_low_mapq);
+    info!("Number of alignments skipped due to not being primary: {}", metrics.num_non_primary);
+    info!("Number of alignments skipped due to being duplicates: {}", metrics.num_duplicates);
+    info!("Number of alignments skipped due to not being associated with a cell barcode: {}", metrics.num_not_cell_bc);
+    info!("Number of alignments skipped due to not being useful: {}", metrics.num_not_useful);
 
     let _ = write_matrix_market(&out_matrix_path as &str, &matrix).unwrap();
     if args.is_present("ref_matrix") {
@@ -279,7 +308,6 @@ pub struct RecHolder<'a> {
 }
 
 
-#[derive(PartialEq, Eq, Ord, PartialOrd, Hash, Debug, Deserialize, Clone)]
 pub struct Locus {
     pub chrom: String,
     pub start: u32,
@@ -291,6 +319,27 @@ pub struct VariantHaps {
     locus: Locus,
     rref: Vec<u8>,
     alt: Vec<u8>,
+}
+
+
+pub struct Metrics {
+    pub num_reads: usize,
+    pub num_low_mapq: usize,
+    pub num_non_primary: usize,
+    pub num_duplicates: usize,
+    pub num_not_cell_bc: usize,
+    pub num_not_useful: usize,
+}
+
+pub struct EvaluateAlnResults {
+    pub metrics: Metrics,
+    pub scores: Vec<(u32, i32, i32)>,
+}
+
+pub struct CellCounts {
+    pub ref_count: usize,
+    pub alt_count: usize,
+    pub unk_count: usize,
 }
 
 
@@ -329,7 +378,7 @@ pub fn evaluate_rec<'a>(rh: &RecHolder,
                         mapq: &u8, 
                         primary: &bool, 
                         duplicates: &bool) 
-                            -> (usize, Vec<(u32, i32, i32)>) {
+                            -> Result<(usize, EvaluateAlnResults), Error> {
     let mut bam = bam::IndexedReader::from_path(rh.bam_file).unwrap();
     let chr = String::from_utf8(rh.rec.header().rid2name(rh.rec.rid().unwrap()).to_vec()).unwrap();
 
@@ -349,7 +398,7 @@ pub fn evaluate_rec<'a>(rh: &RecHolder,
     };
 
     let scores = evaluate_alns(&mut bam, &haps, &rh.cell_barcodes, mapq, primary, duplicates).unwrap();
-    (rh.i, scores)
+    Ok((rh.i, scores))
 }
 
 
@@ -411,40 +460,59 @@ pub fn evaluate_alns(bam: &mut bam::IndexedReader,
                     mapq: &u8,
                     primary: &bool,
                     duplicates: &bool)
-                        -> Result<Vec<(u32, i32, i32)>, Error> {
+                        -> Result<EvaluateAlnResults, Error> {
     // loop over all alignments in the region of interest
     // if the alignments are useful (aligned over this region)
     // perform smith-waterman against both haplotypes
     // and report the scores
+
+    let metrics = Metrics {
+        num_reads: 0,
+        num_low_mapq: 0,
+        num_non_primary: 0,
+        num_duplicates: 0,
+        num_not_cell_bc: 0,
+        num_not_useful: 0,
+    };
+
+    let mut r = EvaluateAlnResults {
+        metrics: metrics,
+        scores: Vec::new(),
+    };
+
     let tid = bam.header().tid(haps.locus.chrom.as_bytes()).unwrap();
 
     bam.fetch(tid, haps.locus.start, haps.locus.end)?;
-    let mut scores = Vec::new();
 
     let locus_str = format!("{}:{}-{}", haps.locus.chrom, haps.locus.start, haps.locus.end);
 
     debug!("Evaluating record {}", locus_str);
     for _rec in bam.records() {
         let rec = _rec?;
+        r.metrics.num_reads += 1;
 
         if rec.mapq() < *mapq {
             debug!("{} skipping read {} due to low mapping quality", 
                    locus_str, String::from_utf8(rec.qname().to_vec()).unwrap());
+            r.metrics.num_low_mapq += 1;
             continue;
         }
         else if primary & (rec.is_secondary() | rec.is_supplementary()) {
             debug!("{} skipping read {} due to not being the primary alignment", 
                    locus_str, String::from_utf8(rec.qname().to_vec()).unwrap());
+            r.metrics.num_non_primary += 1;
             continue;
         }
         else if duplicates & rec.is_duplicate() {
             debug!("{} skipping read {} due to being a duplicate", 
                    locus_str, String::from_utf8(rec.qname().to_vec()).unwrap());
+                r.metrics.num_duplicates += 1;
             continue
         }
         else if useful_rec(haps, &rec).unwrap() == false {
             debug!("{} skipping read {} due to not being useful", 
                    locus_str, String::from_utf8(rec.qname().to_vec()).unwrap());
+            r.metrics.num_not_useful += 1;
             continue;
         }
 
@@ -452,16 +520,13 @@ pub fn evaluate_alns(bam: &mut bam::IndexedReader,
         if cell_index.is_none() {
             debug!("{} skipping read {} due to not having a cell barcode",
                     locus_str, String::from_utf8(rec.qname().to_vec()).unwrap());
+            r.metrics.num_not_cell_bc += 1;
             continue;
         }
         let cell_index = cell_index.unwrap();
 
         let seq = &rec.seq().as_bytes();
 
-        let score = |a: u8, b: u8| if a == b {1i32} else {-5i32};
-        let k = 6;  // kmer match length
-        let w = 20;  // Window size for creating the band
-        let mut aligner = banded::Aligner::new(-5, -1, score, k, w);
         let score = |a: u8, b: u8| if a == b {MATCH} else {MISMATCH};
         let mut aligner = banded::Aligner::new(GAP_OPEN, GAP_EXTEND, score, K, W);
         let ref_alignment = aligner.local(seq, &haps.rref);
@@ -474,10 +539,10 @@ pub fn evaluate_alns(bam: &mut bam::IndexedReader,
         debug!("{} {} ref_score: {} alt_score: {}", locus_str, String::from_utf8(rec.qname().to_vec()).unwrap(),
                 ref_alignment.score, alt_alignment.score);
 
-        scores.push((cell_index, ref_alignment.score, alt_alignment.score))
+        r.scores.push((cell_index, ref_alignment.score, alt_alignment.score))
     }
 
-    Ok(scores)
+    Ok(r)
 }
 
 
@@ -549,25 +614,32 @@ fn parse_scores(scores: &Vec<(u32, i32, i32)>) -> HashMap<&u32, Vec<&i8>> {
     parsed_scores
 }
 
+pub fn convert_to_counts(r: Vec<&i8>) -> CellCounts {
+    let c = CellCounts {
+        ref_count: r.iter().filter(|&x| *x == &REF_VALUE).count(),
+        alt_count: r.iter().filter(|&x| *x == &ALT_VALUE).count(),
+        unk_count: r.iter().filter(|&x| *x == &UNKNOWN_VALUE).count(),
+    };
+    c
+}
 
-pub fn consensus_scoring(scores: &Vec<(u32, i32, i32)>, i: usize) -> Vec<(&u32, f64)> {
-    let parsed_scores = parse_scores(scores);
 
+pub fn consensus_scoring(results: &EvaluateAlnResults, i: usize) -> Vec<(&u32, f64)> {
+    let parsed_scores = parse_scores(&results.scores);
     let mut result = Vec::new();
     for (bc, r) in parsed_scores.into_iter() {
-        let ref_count = r.iter().filter(|&x| *x == &REF_VALUE).count();
-        let alt_count = r.iter().filter(|&x| *x == &ALT_VALUE).count();
-        let unk_count = r.iter().filter(|&x| *x == &UNKNOWN_VALUE).count();
-        if unk_count > 1 {
+        let counts = convert_to_counts(r);
+        if counts.unk_count > 1 {
             info!("Variant at index {} has multiple unknown reads at barcode index {}. Check this locus manually", i, bc);
         }
-        if (ref_count > 0) & (alt_count > 0) {
+        
+        if (counts.ref_count > 0) & (counts.alt_count > 0) {
             result.push((bc, REF_ALT_VALUE as f64));
         }
-        else if alt_count > 0 {
+        else if counts.alt_count > 0 {
             result.push((bc, ALT_VALUE as f64));
         }
-        else if ref_count > 0 {
+        else if counts.ref_count > 0 {
             result.push((bc, REF_VALUE as f64));
         }
     }
@@ -575,28 +647,35 @@ pub fn consensus_scoring(scores: &Vec<(u32, i32, i32)>, i: usize) -> Vec<(&u32, 
 }
 
 
-pub fn alt_frac(scores: &Vec<(u32, i32, i32)>) -> Vec<(&u32, f64)> {
-    let parsed_scores = parse_scores(scores);
+pub fn alt_frac(results: &EvaluateAlnResults, i: usize) -> Vec<(&u32, f64)> {
+    let parsed_scores = parse_scores(&results.scores);
     let mut result = Vec::new();
     for (bc, r) in parsed_scores.into_iter() {
-        let ref_count = r.iter().filter(|&x| *x == &REF_VALUE).count();
-        let alt_count = r.iter().filter(|&x| *x == &ALT_VALUE).count();
-        let unk_count = r.iter().filter(|&x| *x == &UNKNOWN_VALUE).count();
-        let alt_frac = alt_count as f64 / (ref_count as f64 + alt_count as f64 + unk_count as f64);
+        let counts = convert_to_counts(r);
+        if counts.unk_count > 1 {
+            info!("Variant at index {} has multiple unknown reads at barcode index {}. Check this locus manually", i, bc);
+        }
+        
+        let alt_frac = counts.alt_count as f64 / (counts.ref_count as f64 + 
+                                                  counts.alt_count as f64 + 
+                                                  counts.unk_count as f64);
         result.push((bc, alt_frac));
     }
     result
 }
 
 
-pub fn coverage(scores: &Vec<(u32, i32, i32)>) -> (Vec<(&u32, f64)>, Vec<(&u32, f64)>) {
-    let parsed_scores = parse_scores(scores);
+pub fn coverage(results: &EvaluateAlnResults, i: usize) -> (Vec<(&u32, f64)>, Vec<(&u32, f64)>) {
+    let parsed_scores = parse_scores(&results.scores);
     let mut result = (Vec::new(), Vec::new());
     for (bc, r) in parsed_scores.into_iter() {
-        let ref_count = r.iter().filter(|&x| *x == &REF_VALUE).count();
-        let alt_count = r.iter().filter(|&x| *x == &ALT_VALUE).count();
-        result.0.push((bc, alt_count as f64));
-        result.1.push((bc, ref_count as f64));
+        let counts = convert_to_counts(r);
+        if counts.unk_count > 1 {
+            info!("Variant at index {} has multiple unknown reads at barcode index {}. Check this locus manually", i, bc);
+        }
+        
+        result.0.push((bc, counts.alt_count as f64));
+        result.1.push((bc, counts.ref_count as f64));
     }
     result
 }
@@ -622,8 +701,8 @@ mod tests {
     use tempfile::tempdir;
     use sprs::io::read_matrix_market;
     // the idea here is to perform regression testing by running the full main() function
-    // against the pre-evaluated test dataset. I have previously calculated a hash of the
-    // output matrix in all of the standard operating modes. I have stored these hashes
+    // against the pre-evaluated test dataset. I have previously validated the output matrix
+    // in all of the standard operating modes. I have stored these matrices in the test/ folder
     // and now run the program in each operating mode to ensure the output has not changed
 
     #[test]
