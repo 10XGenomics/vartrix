@@ -36,7 +36,7 @@ VarTrix is standard Rust executable project, that works with stable Rust >=1.13.
 
 `--padding`: The amount of padding around the variant to use when constructing the reference and alternative haplotype for alignment. This should be no shorter than your read length. DEFAULT: 100bp.
 
-`--scoring-method (-s)`: The scoring method to be used in the output matrix. In the default `binary` mode, the matrix will have a `1` if all reads at the position support the ref allele, and a `2` if one or more reads support the alt allele. In the `alt_frac` mode, the output matrix will have the fraction of alternate allele reads seen at this position. In the `coverage` mode, two matrices are produced. The matrix sent to `--out-matrix` is the number of alt reads seen, and the matrix sent to `--ref-matrix` is the number of ref reads seen. DEFAULT: binary.
+`--scoring-method (-s)`: The scoring method to be used in the output matrix. In the default `consensus` mode, the matrix will have a `1` if all reads at the position support the ref allele, a `2` if one or more reads support the alt allele, and a `3` if one or more reads support both the alt and the ref allele. In the `alt_frac` mode, the output matrix will have the fraction of alternate allele reads seen at this position. In the `coverage` mode, two matrices are produced. The matrix sent to `--out-matrix` is the number of alt reads seen, and the matrix sent to `--ref-matrix` is the number of ref reads seen. DEFAULT: consensus.
 
 `--ref-matrix`: If `--scoring-method` is set to `coverage`, this must also be set. This is the path that the reference coverage matrix will be written to.
 
@@ -56,6 +56,93 @@ The default logging level will only report on errors. The next log level, `info`
 
 #### Problematic sites
 With the log level set to `info` or higher, upon the final scoring step, VarTrix will report on barcode/variant pairs that are inconsistent for potential manual inspection. This situation arises when multiple reads for a given barcode/variant combination have equal alignment scores to both the ref and alt haplotype. The most common cause for this is that this location is a multi-allelic site that was not reported as such in the VCF. This is most often seen in cancer samples with large copy number expansions. In these cases, VarTrix will not consider these reads when populating the matrix.
+
+### Loading data into Seraut
+
+Below is some example code for using the output of VarTrix with Seraut to enable highlighting of variants on expression clusters.
+
+```
+library(Seurat)
+library(Matrix)
+library(stringr)
+```
+
+#### To get the SNVs in the correct format
+```
+vawk '{print $1,$2}' out.vcf > SNV.loci.txt
+sed -i 's/\s/:/g' SNV.loci.txt 
+```
+
+
+#### Read in the matrix, barcodes, and SNVs
+```
+# Read in the sparse genotype matrix
+snv_matrix <- readMM("matrix.mtx")
+
+# convert the matrix to a dataframe
+snv_matrix <- as.data.frame(as.matrix(snv_matrix))
+
+#read in the cell barcodes output by Cellranger
+barcodes <- read.table("filtered_matrix_mex/barcodes.tsv", header = F)
+
+# read in SNV loci
+# Should be constructed a single column. For example
+
+# chr1:1234-1235
+# chr2:2345-2346
+
+# Construct the final table to add to the Seurat object
+snps <- read.table("SNV.loci.txt", header = F)
+
+row.names(snv_matrix) <- barcodes$V1
+
+colnames(snv_matrix) <- snps$V1
+```
+
+Pull a unique variant for from snps (for example chr1:1624866)
+
+```
+# Construct the data.frame
+gt_chr1_1624866 <- data.frame(gt_chr1_1624866$`chr1:1624866`)
+
+row.names(gt_chr1_1624866) <- barcodes$V1
+
+colnames(gt_chr1_1624866) <- "chr1:1624866"
+
+# Make the encoding more readable
+gt_chr1_1624866$`chr1:1624866` <- str_replace(as.character(gt_chr1_1624866$`chr1:1624866`), "0", "No Call")
+gt_chr1_1624866$`chr1:1624866` <- str_replace(as.character(gt_chr1_1624866$`chr1:1624866`), "1", "ref/ref")
+gt_chr1_1624866$`chr1:1624866` <- str_replace(as.character(gt_chr1_1624866$`chr1:1624866`), "2", "alt/alt")
+gt_chr1_1624866$`chr1:1624866` <- str_replace(as.character(gt_chr1_1624866$`chr1:1624866`), "3", "alt/ref")
+```
+
+Example output
+```
+                    chr1:1624866
+AAACGAAAGAAATTCG	No Call			
+AAACGAAAGCTGGAGT	No Call			
+AAACGAAAGTATCTGC	No Call			
+AAACGAACACCGAAAG	ref/ref			
+AAACGAAGTGCAAGAC	No Call			
+AAACGAAGTGTCCAGC	alt/ref
+```
+
+```
+seurat.data <- Read10X("/path/to/filtered_matrix_mex")
+seurat_obj <- CreateSeuratObject(raw.data = seurat.data, min.cells = 1, project = "seurat_obj")
+
+seurat_obj <- AddMetaData(object = seurat_obj, metadata = gt_chr1_1624866)
+```
+
+**Process your data to the point of plotting tSNE**
+
+
+#### Plot the tSNE with SNVs layered
+```
+TSNEPlot(object = seurat_obj, do.label = T, colors.use = c("azure2","black", "yellow","red"), 
+         pt.size = 2, group.by = "chr1:1624866", label.size = 0.0, plot.order = c("alt/alt" ,"alt/ref", "ref/ref","No Call" ),
+         plot.title = "chr1:1624866", do.return = T)
+```
 
 
 ### Loading data into Seraut
