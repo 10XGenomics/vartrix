@@ -200,7 +200,7 @@ fn _main(cli_args: Vec<String>) {
 
     validate_inputs(&recs, &bam_file, &fasta_file);
 
-    info!("Parsed variant VCF");
+    debug!("Parsed variant VCF");
 
     let _pool = rayon::ThreadPoolBuilder::new().num_threads(threads).build().unwrap();
     debug!("Initialized a thread pool with {} threads", threads);
@@ -270,13 +270,13 @@ fn _main(cli_args: Vec<String>) {
     let _ = write_matrix_market(&out_matrix_path as &str, &matrix).unwrap();
     if args.is_present("ref_matrix") {
         let _ = write_matrix_market(&ref_matrix_path as &str, &ref_matrix).unwrap();
-        info!("Wrote reference matrix file");
+        debug!("Wrote reference matrix file");
     }
 
     if args.is_present("out_variants") {
         let out_variants = args.value_of("out_variants").expect("Out variants path flag set but no value");
         write_variants(out_variants, vcf_file);
-        info!("Wrote matrix file");
+        debug!("Wrote matrix file");
     }
 }
 
