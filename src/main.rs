@@ -173,24 +173,7 @@ fn _main(cli_args: Vec<String>) {
 
     let _ = SimpleLogger::init(ll, Config::default());
 
-    for path in [fasta_file, vcf_file, bam_file, cell_barcodes].iter() {
-        if !Path::new(&path).exists() {
-            error!("File {} does not exist", path);
-            process::exit(1);
-        }
-    }
-
-    // check for indices as well
-    let fai = fasta_file.to_owned() + ".fai";
-    if !Path::new(&fai).exists() {
-        error!("File {} does not exist", fai);
-        process::exit(1);
-    }
-    let bai = bam_file.to_owned() + ".bai";
-    if !Path::new(&bai).exists() {
-        error!("File {} does not exist", bai);
-        process::exit(1);
-    }
+    check_inputs_exist(fasta_file, vcf_file, bam_file, cell_barcodes);
 
     let mut rdr = bcf::Reader::from_path(&vcf_file).unwrap();
     let cell_barcodes = load_barcodes(&cell_barcodes).unwrap();
@@ -340,6 +323,28 @@ pub struct CellCounts {
     pub ref_count: usize,
     pub alt_count: usize,
     pub unk_count: usize,
+}
+
+
+pub fn check_inputs_exist(fasta_file: &str, vcf_file: &str, bam_file: &str, cell_barcodes: &str) {
+        for path in [fasta_file, vcf_file, bam_file, cell_barcodes].iter() {
+        if !Path::new(&path).exists() {
+            error!("File {} does not exist", path);
+            process::exit(1);
+        }
+    }
+
+    // check for indices as well
+    let fai = fasta_file.to_owned() + ".fai";
+    if !Path::new(&fai).exists() {
+        error!("File {} does not exist", fai);
+        process::exit(1);
+    }
+    let bai = bam_file.to_owned() + ".bai";
+    if !Path::new(&bai).exists() {
+        error!("File {} does not exist", bai);
+        process::exit(1);
+    }
 }
 
 
