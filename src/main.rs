@@ -123,7 +123,10 @@ fn get_args() -> clap::App<'static, 'static> {
              .help("Use primary alignments only"))
         .arg(Arg::with_name("no_duplicates")
              .long("no-duplicates")
-             .help("Do not consider duplicate alignments"));
+             .help("Do not consider duplicate alignments"))
+        .arg(Arg::with_name("umi")
+             .long("umi")
+             .help("Consider UMI information when populating coverage matrices?"));
         args
 }
 
@@ -157,10 +160,12 @@ fn _main(cli_args: Vec<String>) {
     let mapq = args.value_of("mapq").unwrap_or_default()
                                     .parse::<u8>()
                                     .expect("Failed to convert mapq to integer");
+    // boolean flags
     let primary_only = args.is_present("primary_alignments");
     let duplicates = args.is_present("no_duplicates");
-    let ll = args.value_of("log_level").unwrap();
+    let use_umi = args.is_present("umi");
 
+    let ll = args.value_of("log_level").unwrap();
     let ll = match ll {
         "info" => LevelFilter::Info,
         "debug" => LevelFilter::Debug,
@@ -197,6 +202,13 @@ fn _main(cli_args: Vec<String>) {
 
     validate_inputs(&recs, &bam_file, &fasta_file);
 
+    let args_holder = Arguments {
+    primary: &primary_only,
+    mapq: &mapq,
+    duplicates: &duplicates,
+    use_umi: &use_umi,
+    };
+
     debug!("Parsed variant VCF");
 
     let _pool = rayon::ThreadPoolBuilder::new().num_threads(threads).build().unwrap();
@@ -204,7 +216,7 @@ fn _main(cli_args: Vec<String>) {
 
     let results: Vec<_> = recs.par_iter()
                               .map(|rec| { 
-                                  evaluate_rec(rec, &mapq, &primary_only, &duplicates).unwrap() 
+                                  evaluate_rec(rec, &args_holder).unwrap() 
                                   } )
                               .collect();
 
@@ -212,16 +224,17 @@ fn _main(cli_args: Vec<String>) {
 
     // create a new Metrics to concatenate all of the individual sub-Metrics on to
     let mut metrics = Metrics {
-        num_reads: 0,
+        num_alignments: 0,
         num_low_mapq: 0,
         num_non_primary: 0,
         num_duplicates: 0,
         num_not_cell_bc: 0,
         num_not_useful: 0,
+        num_non_umi: 0,
     };
 
     fn add_metrics(metrics: &mut Metrics, m: &Metrics) {
-        metrics.num_reads += m.num_reads;
+        metrics.num_alignments += m.num_alignments;
         metrics.num_low_mapq += m.num_low_mapq;
         metrics.num_non_primary += m.num_non_primary;
         metrics.num_duplicates += m.num_duplicates;
@@ -257,7 +270,7 @@ fn _main(cli_args: Vec<String>) {
         };
     }
     debug!("Finished scoring alignments for all variants");
-    info!("Number of alignments evaluated: {}", metrics.num_reads);
+    info!("Number of alignments evaluated: {}", metrics.num_alignments);
     info!("Number of alignments skipped due to low mapping quality: {}", metrics.num_low_mapq);
     info!("Number of alignments skipped due to not being primary: {}", metrics.num_non_primary);
     info!("Number of alignments skipped due to being duplicates: {}", metrics.num_duplicates);
@@ -302,13 +315,22 @@ pub struct VariantHaps {
 }
 
 
+pub struct Arguments {
+    primary: &'static bool,
+    mapq: &'static u8,
+    duplicates: &'static bool,
+    use_umi: &'static bool,
+}
+
+
 pub struct Metrics {
-    pub num_reads: usize,
+    pub num_alignments: usize,
     pub num_low_mapq: usize,
     pub num_non_primary: usize,
     pub num_duplicates: usize,
     pub num_not_cell_bc: usize,
     pub num_not_useful: usize,
+    pub num_non_umi: usize,
 }
 
 
@@ -377,11 +399,7 @@ pub fn validate_inputs(recs: &std::vec::Vec<RecHolder<'_>>, bam_file: &str, fast
 }
 
 
-pub fn evaluate_rec<'a>(rh: &RecHolder, 
-                        mapq: &u8, 
-                        primary: &bool, 
-                        duplicates: &bool) 
-                            -> Result<(usize, EvaluateAlnResults), Error> {
+pub fn evaluate_rec<'a>(rh: &RecHolder, args: &Arguments) -> Result<(usize, EvaluateAlnResults), Error> {
     let mut bam = bam::IndexedReader::from_path(rh.bam_file).unwrap();
     let chr = String::from_utf8(rh.rec.header().rid2name(rh.rec.rid().unwrap()).to_vec()).unwrap();
 
@@ -400,7 +418,7 @@ pub fn evaluate_rec<'a>(rh: &RecHolder,
         alt
     };
 
-    let scores = evaluate_alns(&mut bam, &haps, &rh.cell_barcodes, mapq, primary, duplicates).unwrap();
+    let scores = evaluate_alns(&mut bam, &haps, &rh.cell_barcodes, args).unwrap();
     Ok((rh.i, scores))
 }
 
@@ -431,6 +449,15 @@ pub fn get_cell_barcode(rec: &Record, cell_barcodes: &HashMap<Vec<u8>, u32>) -> 
     }
 }
 
+pub fn get_umi(rec: &Record) -> Option<Vec<u8>> {
+    match rec.aux(b"UB") {
+        Some(Aux::String(hp)) => {
+            Some(hp.to_vec())
+        },
+        _ => None,
+    }
+}
+
 
 pub fn chrom_len(chrom: &str, fa: &mut fasta::IndexedReader<File>) -> Result<u64, Error> {
     for s in fa.index.sequences() {
@@ -456,13 +483,53 @@ pub fn useful_rec(haps: &VariantHaps, rec: &bam::Record) -> Result<bool, Error> 
         Ok(false)
 }
 
+pub fn check_if_rec_should_be_aligned(rec: bam::Record,
+                                      metrics: &mut Metrics,
+                                      args: &Arguments,
+                                      haps: &VariantHaps,
+                                      cell_barcodes: &HashMap<Vec<u8>, u32>,
+                                      locus_str: String) -> Option<u32> {
+    r.metrics.num_alignments += 1;
+    if rec.mapq() < *args.mapq {
+        debug!("{} skipping read {} due to low mapping quality", 
+                locus_str, String::from_utf8(rec.qname().to_vec()).unwrap());
+        metrics.num_low_mapq += 1;
+        return None
+    }
+    else if args.primary & (rec.is_secondary() | rec.is_supplementary()) {
+        debug!("{} skipping read {} due to not being the primary alignment", 
+                locus_str, String::from_utf8(rec.qname().to_vec()).unwrap());
+        metrics.num_non_primary += 1;
+        return None
+    }
+    else if args.duplicates & rec.is_duplicate() {
+        debug!("{} skipping read {} due to being a duplicate", 
+                locus_str, String::from_utf8(rec.qname().to_vec()).unwrap());
+            metrics.num_duplicates += 1;
+        return None
+    }
+    else if useful_rec(haps, &rec).unwrap() == false {
+        debug!("{} skipping read {} due to not being useful", 
+                locus_str, String::from_utf8(rec.qname().to_vec()).unwrap());
+        metrics.num_not_useful += 1;
+        return None
+    }
+
+    let cell_index = get_cell_barcode(&rec, cell_barcodes);
+    if cell_index.is_none() {
+        debug!("{} skipping read {} due to not having a cell barcode",
+                locus_str, String::from_utf8(rec.qname().to_vec()).unwrap());
+        metrics.num_not_cell_bc += 1;
+        return None
+    }
+    cell_index
+}
+
 
 pub fn evaluate_alns(bam: &mut bam::IndexedReader, 
                     haps: &VariantHaps, 
                     cell_barcodes: &HashMap<Vec<u8>, u32>,
-                    mapq: &u8,
-                    primary: &bool,
-                    duplicates: &bool)
+                    args: &Arguments)
                         -> Result<EvaluateAlnResults, Error> {
     // loop over all alignments in the region of interest
     // if the alignments are useful (aligned over this region)
@@ -470,12 +537,13 @@ pub fn evaluate_alns(bam: &mut bam::IndexedReader,
     // and report the scores
 
     let metrics = Metrics {
-        num_reads: 0,
+        num_alignments: 0,
         num_low_mapq: 0,
         num_non_primary: 0,
         num_duplicates: 0,
         num_not_cell_bc: 0,
         num_not_useful: 0,
+        num_non_umi: 0,
     };
 
     let mut r = EvaluateAlnResults {
@@ -492,41 +560,25 @@ pub fn evaluate_alns(bam: &mut bam::IndexedReader,
     debug!("Evaluating record {}", locus_str);
     for _rec in bam.records() {
         let rec = _rec?;
-        r.metrics.num_reads += 1;
-
-        if rec.mapq() < *mapq {
-            debug!("{} skipping read {} due to low mapping quality", 
-                   locus_str, String::from_utf8(rec.qname().to_vec()).unwrap());
-            r.metrics.num_low_mapq += 1;
-            continue;
-        }
-        else if primary & (rec.is_secondary() | rec.is_supplementary()) {
-            debug!("{} skipping read {} due to not being the primary alignment", 
-                   locus_str, String::from_utf8(rec.qname().to_vec()).unwrap());
-            r.metrics.num_non_primary += 1;
-            continue;
-        }
-        else if duplicates & rec.is_duplicate() {
-            debug!("{} skipping read {} due to being a duplicate", 
-                   locus_str, String::from_utf8(rec.qname().to_vec()).unwrap());
-                r.metrics.num_duplicates += 1;
+        let _use_rec = check_if_rec_should_be_aligned(rec, &mut r.metrics, args, haps, cell_barcodes, locus_str);
+        if _use_rec.is_none() {
             continue
         }
-        else if useful_rec(haps, &rec).unwrap() == false {
-            debug!("{} skipping read {} due to not being useful", 
-                   locus_str, String::from_utf8(rec.qname().to_vec()).unwrap());
-            r.metrics.num_not_useful += 1;
-            continue;
-        }
 
-        let cell_index = get_cell_barcode(&rec, cell_barcodes);
-        if cell_index.is_none() {
-            debug!("{} skipping read {} due to not having a cell barcode",
+        let cell_index = _use_rec.unwrap();
+
+        let _umi = if use_umi == &true {
+            get_umi(&rec)
+        } else {
+            None
+        };
+        if _umi.is_none() {
+            debug!("{} skipping read {} due to not having a UMI",
                     locus_str, String::from_utf8(rec.qname().to_vec()).unwrap());
-            r.metrics.num_not_cell_bc += 1;
+            r.metrics.num_non_umi += 1;
             continue;
         }
-        let cell_index = cell_index.unwrap();
+        let umi = _umi.unwrap();
 
         let seq = &rec.seq().as_bytes();
 
