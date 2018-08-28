@@ -9,6 +9,9 @@ matrix:
   - os: osx
     rust: stable
     env: TARGET=x86_64-apple-darwin
+  - os: linux
+    rust: stable
+    env: TARGET=x86_64-unknown-linux-gnu
 install: ci/install.sh
 script: ci/script.sh
 before_deploy: ci/before_deploy.sh
@@ -23,3 +26,4 @@ deploy:
     repo: 10XGenomics/vartrix
     branch: master
     tags: true
+    condition: "$TARGET=x86_64-apple-darwin"
