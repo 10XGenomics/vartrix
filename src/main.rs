@@ -2,7 +2,6 @@ extern crate bio;
 extern crate rust_htslib;
 extern crate clap;
 extern crate csv;
-extern crate serde;
 extern crate sprs;
 extern crate rayon;
 extern crate terminal_size;
@@ -10,8 +9,6 @@ extern crate tempfile;
 extern crate simplelog;
 #[macro_use]
 extern crate log;
-#[macro_use]
-extern crate serde_derive;
 #[macro_use]
 extern crate failure;
 #[macro_use]
@@ -314,10 +311,12 @@ pub struct Metrics {
     pub num_not_useful: usize,
 }
 
+
 pub struct EvaluateAlnResults {
     pub metrics: Metrics,
     pub scores: Vec<(u32, i32, i32)>,
 }
+
 
 pub struct CellCounts {
     pub ref_count: usize,
@@ -333,7 +332,6 @@ pub fn check_inputs_exist(fasta_file: &str, vcf_file: &str, bam_file: &str, cell
             process::exit(1);
         }
     }
-
     // check for indices as well
     let fai = fasta_file.to_owned() + ".fai";
     if !Path::new(&fai).exists() {
