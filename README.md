@@ -1,30 +1,32 @@
-## VarTrix
+# VarTrix
 
 VarTrix is a tool for extracting single-cell variant information from single-cell sequencing datasets. VarTrix uses Smith-Waterman alignment to evaluate reads that map to a known variant locus and assign single cells to these variants. This process works on both single-cell RNA sequencing datasets as well as single-cell DNA sequencing datasets.
 
-At this point, all multi-allelic sites are ignored. They will still be a column in the final matrix to maintain ordering, but all values will be empty.
+VarTrix works with any properly formatted sequence resolved VCF. VarTrix works with SNVs, insertions and deletions.
 
-### Use cases
+At this point, all multi-allelic sites are ignored. They will still be a column in the final matrix to maintain ordering relative to the input VCF, but all values will be empty.
+
+## Use cases
 VarTrix is useful for evaluating heterogeneity of single cell datasets, including tumor samples and cell lines. 
 
-#### scRNA-seq
-Allele specific expression in tumor samples can lead to strong correlations between the presence of a specific expressed variant and expression-based clustering. Overlaying the SNV information with expression clustering can lead to new insight in to the cause of a specific cancer and to the accumulation of mutations that may lead to relapse or drug resistance.
+### scRNA-seq
+Allele specific expression in tumor samples can lead to strong correlations between the presence of a specific expressed variant and expression-based clustering. Overlaying the variant information with expression clustering can lead to new insight in to the cause of a specific cancer and to the accumulation of mutations that may lead to relapse or drug resistance.
 
-#### scDNA-seq
+### scDNA-seq
 Assignment of variants in scDNA data can improve understanding of tumor and cell line heterogeneity. Copy number expansion in tumor cells or chromothripsis in cell lines can lead to specific variants being associated with subclonal populations. Similar to scRNA-seq datasets, variant assignment to specific cells can be overlaid with copy number based clustering.
 
-### Installation
+## Installation
 
 VarTrix has automatically generated downloadable binaries for generic linux and Mac OSX under the [releases page](https://github.com/10XGenomics/vartrix/releases). The linux binaries will work on [any of our supported OSes](https://support.10xgenomics.com/os-support). 
 
-### Compiling from source
+## Compiling from source
 VarTrix is standard Rust executable project, that works with stable Rust >=1.13. Install Rust through the standard channels, then type `cargo build --release`. The executable will appear at `target/release/vartrix`. As usual it's important to use a release build to get good performance.
 
-### Usage
+## Usage
 
 `--vcf (-v)`: Input VCF formatted variants to be assigned. REQUIRED.
 
-`--bam (-b)`: Input CellRanger BAM. This BAM must have the `CB` tag to define the barcodes of cell barcodes. REQUIRED.
+`--bam (-b)`: Input CellRanger BAM. This BAM must have the `CB` tag to define the barcodes of cell barcodes. Must also have an index file. REQUIRED.
 
 `--fasta (-f)`: A FASTA file for the reference genome used in the BAM. Must have a index file. REQUIRED.
 
@@ -51,14 +53,14 @@ VarTrix is standard Rust executable project, that works with stable Rust >=1.13.
 `--no-duplicates`: Boolean flag -- ignore alignments marked as duplicates? Take care when turning this on with scRNA-seq data, as duplicates are marked in that pipeline for every extra read sharing the same UMI/CB pair, which will result in most variant data being lost. Default: false.
 
 
-### Log level considerations
+## Log level considerations
 The default logging level will only report on errors. The next log level, `info`, will report on basic information like the number of variants and barcodes seen, as well as reporting on sites that are problematic in consensus mode. In `debug` mode, the constructed haplotypes and alignments for every single read will be reported. For large datasets, this can produce an extremely large log file.
 
-#### Problematic sites
+### Problematic sites
 With the log level set to `info` or higher, upon the final scoring step, VarTrix will report on barcode/variant pairs that are inconsistent for potential manual inspection. This situation arises when multiple reads for a given barcode/variant combination have equal alignment scores to both the ref and alt haplotype. The most common cause for this is that this location is a multi-allelic site that was not reported as such in the VCF. This is most often seen in cancer samples with large copy number expansions. In these cases, VarTrix will not consider these reads when populating the matrix.
 
 
-### Loading data into Seraut
+## Loading data into Seraut
 
 Below is some example code for using the output of VarTrix with Seraut to enable highlighting of variants on expression clusters.
 
@@ -68,7 +70,7 @@ library(Matrix)
 library(stringr)
 ```
 
-#### To get the SNVs in the correct format
+### To get the variants in the correct format
 ```
 vawk '{print $1,$2}' my.vcf > SNV.loci.txt
 sed -i 's/\s/:/g' SNV.loci.txt 
@@ -77,7 +79,7 @@ sed -i 's/\s/:/g' SNV.loci.txt
 Where `my.vcf` is the VCF that you used as input to VarTrix.
 
 
-#### Read in the matrix, barcodes, and SNVs
+### Read in the matrix, barcodes, and variants
 ```
 # Read in the sparse genotype matrix
 snv_matrix <- readMM("matrix.mtx")
@@ -142,12 +144,12 @@ seurat_obj <- AddMetaData(object = seurat_obj, metadata = gt_chr1_1624866)
 Now process your data to the point of generating a tSNE. If you have never done this before, consult the [Seraut tutorial](https://satijalab.org/seurat/get_started.html).
 
 
-#### Plot the tSNE with SNVs layered
+### Plot the tSNE with variants layered
 ```
 TSNEPlot(object = seurat_obj, do.label = T, colors.use = c("azure2","black", "yellow","red"), 
          pt.size = 2, group.by = "chr1:1624866", label.size = 0.0, plot.order = c("alt/alt" ,"alt/ref", "ref/ref","No Call" ),
          plot.title = "chr1:1624866", do.return = T)
 ```
 
-### License
+## License
 VarTrix is licensed under the [MIT license](http://opensource.org/licenses/MIT). This project may not be copied, modified, or distributed except according to those terms.
