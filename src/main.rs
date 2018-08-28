@@ -42,6 +42,12 @@ const ALT_VALUE: i8 = 2;
 const REF_ALT_VALUE: i8 = 3;
 const MIN_SCORE: i32 = 25;
 const UNKNOWN_VALUE: i8 = -1;
+const K: usize = 6;  // kmer match length
+const W: usize = 20;  // Window size for creating the band
+const MATCH: i32 = 1;  // Match score
+const MISMATCH: i32 = -5; // Mismatch score
+const GAP_OPEN: i32 = -5; // Gap open score
+const GAP_EXTEND: i32 = -1;  // Gap extend score
 
 fn get_args() -> clap::App<'static, 'static> {
     let args = App::new("vartrix")
@@ -456,6 +462,8 @@ pub fn evaluate_alns(bam: &mut bam::IndexedReader,
         let k = 6;  // kmer match length
         let w = 20;  // Window size for creating the band
         let mut aligner = banded::Aligner::new(-5, -1, score, k, w);
+        let score = |a: u8, b: u8| if a == b {MATCH} else {MISMATCH};
+        let mut aligner = banded::Aligner::new(GAP_OPEN, GAP_EXTEND, score, K, W);
         let ref_alignment = aligner.local(seq, &haps.rref);
         let alt_alignment = aligner.local(seq, &haps.alt);
 
