@@ -60,7 +60,7 @@ The default logging level will only report on errors. The next log level, `info`
 With the log level set to `info` or higher, upon the final scoring step, VarTrix will report on barcode/variant pairs that are inconsistent for potential manual inspection. This situation arises when multiple reads for a given barcode/variant combination have equal alignment scores to both the ref and alt haplotype. The most common cause for this is that this location is a multi-allelic site that was not reported as such in the VCF. This is most often seen in cancer samples with large copy number expansions. In these cases, VarTrix will not consider these reads when populating the matrix.
 
 ## Troubleshooting
-VarTrix is provided for demonstration purposes only and is not an officially supported 10x Genomics application.  If you have any bug reports, feature requests, or questions about VarTrix please submit a GitHub issue. 
+VarTrix is not an officially supported 10x Genomics application.  If you have any bug reports, feature requests, or questions about VarTrix please submit a GitHub issue. 
 
 If any uncaught errors happen during execution, VarTrix uses the human_panic library which will package the full backtrace into a temporary file. Please put the contents of this file in your GitHub issue.
 
