@@ -1,6 +1,8 @@
 # VarTrix
 
-VarTrix is a tool for extracting single-cell variant information from single-cell sequencing datasets. VarTrix uses Smith-Waterman alignment to evaluate reads that map to a known variant locus and assign single cells to these variants. This process works on both single-cell RNA sequencing datasets as well as single-cell DNA sequencing datasets.
+VarTrix is a tool for extracting single-cell variant information from single-cell sequencing datasets. VarTrix is **not** a variant calling tool. Users must provide a variant call set that they have previously generated through other means. VarTrix is useful for evaluating heterogeneity within a single-cell sample, which means that the types of variants that will be useful to a user are either *somatic* or *contained within a copy number variant (CNV) event*.
+
+VarTrix uses Smith-Waterman alignment to evaluate reads that map to a known variant locus and assign single cells to these variants. This process works on both single-cell RNA sequencing datasets as well as single-cell DNA sequencing datasets.
 
 VarTrix works with any properly formatted sequence resolved VCF. VarTrix works with SNVs, insertions and deletions.
 
@@ -11,6 +13,9 @@ VarTrix is useful for evaluating heterogeneity of single cell datasets, includin
 
 ### scRNA-seq
 Allele specific expression in tumor samples can lead to strong correlations between the presence of a specific expressed variant and expression-based clustering. Overlaying the variant information with expression clustering can lead to new insight in to the cause of a specific cancer and to the accumulation of mutations that may lead to relapse or drug resistance.
+
+#### Input variants
+Generating variants from scRNA-seq datasets is challenging. Noise inherent in reverse transcription leads to a high false positive rate. We recommend looking at the Broad Institute's GATK and Mutect2 best practices guide for (calling variants in RNAseq)[https://software.broadinstitute.org/gatk/documentation/article.php?id=3891]. An alternative approach is to determine somatic variants using WGS data generated from the same sample as the scRNA-seq library.
 
 ### scDNA-seq
 Assignment of variants in scDNA data can improve understanding of tumor and cell line heterogeneity. Copy number expansion in tumor cells or chromothripsis in cell lines can lead to specific variants being associated with subclonal populations. Similar to scRNA-seq datasets, variant assignment to specific cells can be overlaid with copy number based clustering.
