@@ -199,14 +199,14 @@ fn _main(cli_args: Vec<String>) {
 
     debug!("Parsed variant VCF");
 
-    let _pool = rayon::ThreadPoolBuilder::new().num_threads(threads).build().unwrap();
+    let pool = rayon::ThreadPoolBuilder::new().num_threads(threads).build().unwrap();
     debug!("Initialized a thread pool with {} threads", threads);
 
-    let results: Vec<_> = recs.par_iter()
-                              .map(|rec| { 
-                                  evaluate_rec(rec, &mapq, &primary_only, &duplicates).unwrap() 
-                                  } )
-                              .collect();
+    let results: Vec<_> = pool.install(|| recs.par_iter()
+                                    .map(|rec| { 
+                                        evaluate_rec(rec, &mapq, &primary_only, &duplicates).unwrap() 
+                                        } )
+                                    .collect());
 
     debug!("Finished aligning reads for all variants");
 
