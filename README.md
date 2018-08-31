@@ -18,7 +18,7 @@ Allele specific expression in tumor samples can lead to strong correlations betw
 Generating variants from scRNA-seq datasets is challenging. Noise inherent in reverse transcription leads to a high false positive rate. We recommend looking at the Broad Institute's GATK and Mutect2 best practices guide for (calling variants in RNAseq)[https://software.broadinstitute.org/gatk/documentation/article.php?id=3891]. An alternative approach is to determine somatic variants using WGS data generated from the same sample as the scRNA-seq library.
 
 ### scDNA-seq
-Assignment of variants in scDNA data can improve understanding of tumor and cell line heterogeneity. Copy number expansion in tumor cells or chromothripsis in cell lines can lead to specific variants being associated with subclonal populations. Similar to scRNA-seq datasets, variant assignment to specific cells can be overlaid with copy number based clustering.
+Assignment of variants in scDNA data can improve understanding of tumor and cell line heterogeneity. Copy number expansion in tumor cells or chromothripsis in cell lines can lead to different allele fractions of germline variants being associated with subclonal populations. Somatic variants in tumor cells can be associated with subclonal populations and associated with subclones that lead to relapse. Similar to scRNA-seq datasets, variant assignment to specific cells can be overlaid with copy number based clustering.
 
 ## Installation
 
