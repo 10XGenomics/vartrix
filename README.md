@@ -59,7 +59,7 @@ VarTrix is standard Rust executable project, that works with stable Rust >=1.13.
 
 
 ## Log level considerations
-The default logging level will only report on errors. The next log level, `info`, will report on basic information like the number of variants and barcodes seen, as well as reporting on sites that are problematic in consensus mode. In `debug` mode, the constructed haplotypes and alignments for every single read will be reported. For large datasets, this can produce an extremely large log file.
+The default logging level will only report on errors. The next log level, `info`, will report on basic information like the number of variants and barcodes seen, as well as reporting on sites that are problematic (see below). In `debug` mode, the constructed haplotypes and alignments for every single read will be reported. For large datasets, this can produce an extremely large log file.
 
 ### Problematic sites
 With the log level set to `info` or higher, upon the final scoring step, VarTrix will report on barcode/variant pairs that are inconsistent for potential manual inspection. This situation arises when multiple reads for a given barcode/variant combination have equal alignment scores to both the ref and alt haplotype. The most common cause for this is that this location is a multi-allelic site that was not reported as such in the VCF. This is most often seen in cancer samples with large copy number expansions. In these cases, VarTrix will not consider these reads when populating the matrix.
