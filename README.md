@@ -27,6 +27,13 @@ VarTrix has automatically generated downloadable binaries for generic linux and 
 ## Compiling from source
 VarTrix is standard Rust executable project, that works with stable Rust >=1.13. Install Rust through the standard channels, then type `cargo build --release`. The executable will appear at `target/release/vartrix`. As usual it's important to use a release build to get good performance.
 
+## Inputs
+VarTrix requires a pre-called variant set in VCF format, an associated set of alignments in BAM or CRAM format, and a genome FASTA file. All sequence names must match between the files. VarTrix also requires a cell barcodes file like the one produced by CellRanger.
+
+## Outputs
+VarTrix produces genome matrices in the same Matrix Market format that CellRanger uses. This is a sparse matrix format that can be read by common packages. The flag `--out-variants` can be used to produce an additional text file that acts as column labels for this matrix. The cell barcode file used as input are the row labels.
+
+
 ## Usage
 
 `--vcf (-v)`: Input VCF formatted variants to be assigned. REQUIRED.

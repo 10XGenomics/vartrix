@@ -338,10 +338,27 @@ pub fn check_inputs_exist(fasta_file: &str, vcf_file: &str, bam_file: &str, cell
         error!("File {} does not exist", fai);
         process::exit(1);
     }
-    let bai = bam_file.to_owned() + ".bai";
-    if !Path::new(&bai).exists() {
-        error!("File {} does not exist", bai);
-        process::exit(1);
+
+    let extension = Path::new(bam_file).extension().unwrap().to_str().unwrap();
+    match extension {
+        "bam" => {
+            let bai = bam_file.to_owned() + ".bai";
+            if !Path::new(&bai).exists() {
+                error!("BAM index {} does not exist", bai);
+                process::exit(1);
+            }
+        }
+        "cram" => {
+            let crai = bam_file.to_owned() + ".crai";
+            if !Path::new(&crai).exists() {
+                error!("CRAM index {} does not exist", crai);
+                process::exit(1);
+            }
+        }
+        &_ => {
+            error!("BAM file did not end in .bam or .cram. Unable to validate");
+            process::exit(1);
+        }
     }
 }
 
