@@ -189,22 +189,31 @@ fn _main(cli_args: Vec<String>) {
         let s = RecHolder { i: i,
                             rec: rec, 
                             fasta_file: &fasta_file, 
-                            padding: padding, 
-                            bam_file: &bam_file, 
+                            padding: padding,
                             cell_barcodes: &cell_barcodes};
         recs.push(s);
     }
+
+    let mut rec_chunks = Vec::new();
+    for rec_chunk in recs.chunks(num_vars / threads) {
+        rec_chunks.push(rec_chunk);
+    }
+    //let rec_chunks = recs.chunks(num_vars / threads);
 
     validate_inputs(&recs, &bam_file, &fasta_file);
 
     debug!("Parsed variant VCF");
 
+    let rdr = ReaderWrapper {
+        filename: bam_file.to_string(),
+        reader: bam::IndexedReader::from_path(&bam_file).unwrap()
+    };
+
     let pool = rayon::ThreadPoolBuilder::new().num_threads(threads).build().unwrap();
     debug!("Initialized a thread pool with {} threads", threads);
-
-    let results: Vec<_> = pool.install(|| recs.par_iter()
-                                    .map(|rec| { 
-                                        evaluate_rec(rec, &mapq, &primary_only, &duplicates).unwrap() 
+    let results: Vec<_> = pool.install(|| rec_chunks.par_iter()
+                                    .map_with(rdr, |r, rec_chunk| { 
+                                        evaluate_chunk(rec_chunk, r, &mapq, &primary_only, &duplicates).unwrap() 
                                         } )
                                     .collect());
 
@@ -229,32 +238,34 @@ fn _main(cli_args: Vec<String>) {
         metrics.num_not_useful += m.num_not_useful;
     }
 
-    for (i, results) in results.iter() {
-        add_metrics(&mut metrics, &results.metrics);
-        match scoring_method {
-            "alt_frac" => { 
-                let result = alt_frac(&results, *i); 
-                for (j, r) in result {
-                    matrix.add_triplet(*i, *j as usize, r);
-                }
-            },
-            "consensus" => { 
-                let result = consensus_scoring(&results, *i); 
-                for (j, r) in result {
-                    matrix.add_triplet(*i, *j as usize, r);
-                }
-            },
-            "coverage" => { 
-                let result = coverage(&results, *i); 
-                for (j, r) in result.0 {
-                    matrix.add_triplet(*i, *j as usize, r);
-                }
-                for (j, r) in result.1 {
-                    ref_matrix.add_triplet(*i, *j as usize, r);
-                }
-            },
-            &_ => { panic!("Scoring method is invalid") },
-        };
+    for v in results.iter() {
+        for (i, scores) in v.iter() {
+            add_metrics(&mut metrics, &scores.metrics);
+            match scoring_method {
+                "alt_frac" => { 
+                    let result = alt_frac(&scores, *i); 
+                    for (j, r) in result {
+                        matrix.add_triplet(*i, *j as usize, r);
+                    }
+                },
+                "consensus" => { 
+                    let result = consensus_scoring(&scores, *i); 
+                    for (j, r) in result {
+                        matrix.add_triplet(*i, *j as usize, r);
+                    }
+                },
+                "coverage" => { 
+                    let result = coverage(&scores, *i); 
+                    for (j, r) in result.0 {
+                        matrix.add_triplet(*i, *j as usize, r);
+                    }
+                    for (j, r) in result.1 {
+                        ref_matrix.add_triplet(*i, *j as usize, r);
+                    }
+                },
+                &_ => { panic!("Scoring method is invalid") },
+            };
+        }
     }
     debug!("Finished scoring alignments for all variants");
     info!("Number of alignments evaluated: {}", metrics.num_reads);
@@ -283,7 +294,6 @@ pub struct RecHolder<'a> {
     rec: bcf::Record,
     fasta_file: &'a str,
     padding: u32,
-    bam_file: &'a str,
     cell_barcodes: &'a HashMap<Vec<u8>, u32>,
 }
 
@@ -322,6 +332,21 @@ pub struct CellCounts {
     pub ref_count: usize,
     pub alt_count: usize,
     pub unk_count: usize,
+}
+
+pub struct ReaderWrapper {
+  filename: String,
+  reader: bam::IndexedReader
+}
+
+
+impl Clone for ReaderWrapper {
+    fn clone(&self) -> ReaderWrapper {
+        ReaderWrapper {
+             filename: self.filename.clone(),
+             reader: bam::IndexedReader::from_path(&self.filename).unwrap(),
+        }
+    }
 }
 
 
@@ -393,14 +418,28 @@ pub fn validate_inputs(recs: &std::vec::Vec<RecHolder<'_>>, bam_file: &str, fast
     }
 }
 
+pub fn evaluate_chunk<'a>(chunk: &&[RecHolder<'_>],
+                        rdr: &mut ReaderWrapper,
+                        mapq: &u8, 
+                        primary: &bool, 
+                        duplicates: &bool) 
+                            -> Result<Vec<(usize, EvaluateAlnResults)>, Error> {
+    let mut chunk_scores = Vec::new();
+    for rh in chunk.iter() {
+        let (i, scores) = evaluate_rec(rh, rdr, mapq, primary, duplicates)?;
+        chunk_scores.push((i, scores))
+    }
+    Ok(chunk_scores)
+}
 
-pub fn evaluate_rec<'a>(rh: &RecHolder, 
+
+pub fn evaluate_rec<'a>(rh: &RecHolder,
+                        rdr: &mut ReaderWrapper,
                         mapq: &u8, 
                         primary: &bool, 
                         duplicates: &bool) 
                             -> Result<(usize, EvaluateAlnResults), Error> {
-    let mut bam = bam::IndexedReader::from_path(rh.bam_file).unwrap();
-    let chr = String::from_utf8(rh.rec.header().rid2name(rh.rec.rid().unwrap()).to_vec()).unwrap();
+    let chr = String::from_utf8(rh.rec.header().rid2name(rh.rec.rid().unwrap()).to_vec())?;
 
     let alleles = rh.rec.alleles();
 
@@ -408,7 +447,7 @@ pub fn evaluate_rec<'a>(rh: &RecHolder,
                         start: rh.rec.pos(), 
                         end: rh.rec.pos() + alleles[0].len() as u32 };
 
-    let mut fa = fasta::IndexedReader::from_file(&rh.fasta_file).unwrap();
+    let mut fa = fasta::IndexedReader::from_file(&rh.fasta_file)?;
     let (rref, alt) = construct_haplotypes(&mut fa, &locus, alleles[1], rh.padding);
 
     let haps = VariantHaps {
@@ -417,7 +456,7 @@ pub fn evaluate_rec<'a>(rh: &RecHolder,
         alt
     };
 
-    let scores = evaluate_alns(&mut bam, &haps, &rh.cell_barcodes, mapq, primary, duplicates).unwrap();
+    let scores = evaluate_alns(&mut rdr.reader, &haps, &rh.cell_barcodes, mapq, primary, duplicates)?;
     Ok((rh.i, scores))
 }
 
