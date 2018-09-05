@@ -7,7 +7,7 @@ VarTrix uses Smith-Waterman alignment to evaluate reads that map to each known i
 
 VarTrix works with any properly formatted sequence resolved VCF. VarTrix works with SNVs, insertions and deletions. 
 
-At this point, all multi-allelic sites are ignored. They will still be a column in the final matrix to maintain ordering relative to the input VCF, but all values will be empty.
+At this point, all multi-allelic sites are ignored. They will still be a row in the final matrix to maintain ordering relative to the input VCF, but all values will be empty.
 
 ## Use cases
 VarTrix is useful for evaluating heterogeneity of 10x single cell datasets, including ones from tumor samples and cell lines. VarTrix can be used to evaluate either *somatic variants*  or *variants contained within a copy number variant (CNV) event*.
@@ -32,22 +32,22 @@ VarTrix is standard Rust executable project, that works with stable Rust >=1.13.
 VarTrix requires a pre-called variant set in VCF format, an associated set of alignments in BAM or CRAM format, and a genome FASTA file. All sequence names must match between the files. VarTrix also requires a cell barcodes file produced by Cell Ranger, for single cell gene expression data, or Cell Ranger DNA, for single cell DNA data.
 
 ## Outputs
-VarTrix produces genome matrices in the same Matrix Market format that Cell Ranger uses. This is a sparse matrix format that can be read by common packages. The cell barcode file used as input are the row labels. The matrix will contain information about each variant for each cell barcode. The exact output is determined by the parameters that are set at runtime. In addition, the flag `--out-variants` can be used to produce an additional text file that acts as column labels for this matrix. 
+VarTrix produces genome matrices in the same Matrix Market format that Cell Ranger uses. This is a sparse matrix format that can be read by common packages. The cell barcode file used as input are the column labels. The matrix will contain information about each variant for each cell barcode. The exact output is determined by the parameters that are set at runtime. In addition, the flag `--out-variants` can be used to produce an additional text file that acts as row labels for this matrix. The cell barcodes file passed to `--cell-barcodes` can be used as column labels.
 
 
 ## Usage
 
 `--vcf (-v)`: Input VCF formatted variants to be assigned. REQUIRED.
 
-`--bam (-b)`: Input CellRanger BAM. This BAM must have the `CB` tag to define the barcodes of cell barcodes. Must also have an index file. REQUIRED.
+`--bam (-b)`: Input Cell Ranger BAM. This BAM must have the `CB` tag to define the barcodes of cell barcodes. Must also have an index file. REQUIRED.
 
 `--fasta (-f)`: A FASTA file for the reference genome used in the BAM. Must have a index file. REQUIRED.
 
-`--cell-barcodes (-c)`: A cell barcodes file as produced by CellRanger that defines which barcodes were called as cells. One barcode per line. In CellRanger runs, this can be found in the sub-folder `outs/filtered_gene_bc_matrices_mex/${refGenome}/barcodes.tsv` where `${refGenome}` is the name of the reference genome used in your CellRanger run. REQUIRED.
+`--cell-barcodes (-c)`: A cell barcodes file as produced by Cell Ranger that defines which barcodes were called as cells. One barcode per line. In Cell Ranger runs, this can be found in the sub-folder `outs/filtered_gene_bc_matrices_mex/${refGenome}/barcodes.tsv` where `${refGenome}` is the name of the reference genome used in your Cell Ranger run. This file can be used as column labels for the output matrix. REQUIRED.
 
-`--out-matrix (-o)`: The path to write a Market Matrix format matrix out to. This is the same sparse matrix format used by CellRanger, and can be loaded into external tools like Seraut. REQUIRED.
+`--out-matrix (-o)`: The path to write a Market Matrix format matrix out to. This is the same sparse matrix format used by Cell Ranger, and can be loaded into external tools like Seraut. REQUIRED.
 
-`--out-variants`: The path to write a neat formatting of the variants to for loading into external tools. This file represents the column labels for `--out-matrix` in the format of `$chromosome_$pos`.
+`--out-variants`: The path to write a neat formatting of the variants to for loading into external tools. This file represents the row labels for `--out-matrix` in the format of `$chromosome_$pos`.
 
 `--padding`: The amount of padding around the variant to use when constructing the reference and alternative haplotype for alignment. This should be no shorter than your read length. DEFAULT: 100bp.
 
@@ -102,7 +102,7 @@ snv_matrix <- readMM("matrix.mtx")
 # convert the matrix to a dataframe
 snv_matrix <- as.data.frame(as.matrix(snv_matrix))
 
-#read in the cell barcodes output by Cellranger
+#read in the cell barcodes output by Cell Ranger
 barcodes <- read.table("filtered_matrix_mex/barcodes.tsv", header = F)
 
 # read in SNV loci
@@ -114,9 +114,9 @@ barcodes <- read.table("filtered_matrix_mex/barcodes.tsv", header = F)
 # Construct the final table to add to the Seurat object
 snps <- read.table("SNV.loci.txt", header = F)
 
-row.names(snv_matrix) <- barcodes$V1
+colnames(snv_matrix) <- barcodes$V1
 
-colnames(snv_matrix) <- snps$V1
+row.names(snv_matrix) <- snps$V1
 ```
 
 Where `matrix.mtx` is the output consensus matrix from VarTrix.
