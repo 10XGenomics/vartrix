@@ -194,6 +194,12 @@ fn _main(cli_args: Vec<String>) {
         recs.push(s);
     }
 
+    let mut rec_chunks = Vec::new();
+    for rec_chunk in recs.chunks(num_vars / threads) {
+        rec_chunks.push(rec_chunk);
+    }
+    //let rec_chunks = recs.chunks(num_vars / threads);
+
     validate_inputs(&recs, &bam_file, &fasta_file);
 
     debug!("Parsed variant VCF");
@@ -205,9 +211,9 @@ fn _main(cli_args: Vec<String>) {
 
     let pool = rayon::ThreadPoolBuilder::new().num_threads(threads).build().unwrap();
     debug!("Initialized a thread pool with {} threads", threads);
-    let results: Vec<_> = pool.install(|| recs.par_iter()
-                                    .map_with(rdr, |r, rec| { 
-                                        evaluate_rec(rec, r, &mapq, &primary_only, &duplicates).unwrap() 
+    let results: Vec<_> = pool.install(|| rec_chunks.par_iter()
+                                    .map_with(rdr, |r, rec_chunk| { 
+                                        evaluate_chunk(rec_chunk, r, &mapq, &primary_only, &duplicates).unwrap() 
                                         } )
                                     .collect());
 
@@ -232,32 +238,34 @@ fn _main(cli_args: Vec<String>) {
         metrics.num_not_useful += m.num_not_useful;
     }
 
-    for (i, results) in results.iter() {
-        add_metrics(&mut metrics, &results.metrics);
-        match scoring_method {
-            "alt_frac" => { 
-                let result = alt_frac(&results, *i); 
-                for (j, r) in result {
-                    matrix.add_triplet(*i, *j as usize, r);
-                }
-            },
-            "consensus" => { 
-                let result = consensus_scoring(&results, *i); 
-                for (j, r) in result {
-                    matrix.add_triplet(*i, *j as usize, r);
-                }
-            },
-            "coverage" => { 
-                let result = coverage(&results, *i); 
-                for (j, r) in result.0 {
-                    matrix.add_triplet(*i, *j as usize, r);
-                }
-                for (j, r) in result.1 {
-                    ref_matrix.add_triplet(*i, *j as usize, r);
-                }
-            },
-            &_ => { panic!("Scoring method is invalid") },
-        };
+    for v in results.iter() {
+        for (i, scores) in v.iter() {
+            add_metrics(&mut metrics, &scores.metrics);
+            match scoring_method {
+                "alt_frac" => { 
+                    let result = alt_frac(&scores, *i); 
+                    for (j, r) in result {
+                        matrix.add_triplet(*i, *j as usize, r);
+                    }
+                },
+                "consensus" => { 
+                    let result = consensus_scoring(&scores, *i); 
+                    for (j, r) in result {
+                        matrix.add_triplet(*i, *j as usize, r);
+                    }
+                },
+                "coverage" => { 
+                    let result = coverage(&scores, *i); 
+                    for (j, r) in result.0 {
+                        matrix.add_triplet(*i, *j as usize, r);
+                    }
+                    for (j, r) in result.1 {
+                        ref_matrix.add_triplet(*i, *j as usize, r);
+                    }
+                },
+                &_ => { panic!("Scoring method is invalid") },
+            };
+        }
     }
     debug!("Finished scoring alignments for all variants");
     info!("Number of alignments evaluated: {}", metrics.num_reads);
@@ -408,6 +416,20 @@ pub fn validate_inputs(recs: &std::vec::Vec<RecHolder<'_>>, bam_file: &str, fast
             process::exit(1);
         }
     }
+}
+
+pub fn evaluate_chunk<'a>(chunk: &&[RecHolder<'_>],
+                        rdr: &mut ReaderWrapper,
+                        mapq: &u8, 
+                        primary: &bool, 
+                        duplicates: &bool) 
+                            -> Result<Vec<(usize, EvaluateAlnResults)>, Error> {
+    let mut chunk_scores = Vec::new();
+    for rh in chunk.iter() {
+        let (i, scores) = evaluate_rec(rh, rdr, mapq, primary, duplicates)?;
+        chunk_scores.push((i, scores))
+    }
+    Ok(chunk_scores)
 }
 
 
