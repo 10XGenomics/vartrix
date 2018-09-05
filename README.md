@@ -1,24 +1,25 @@
 # VarTrix
 
-VarTrix is a tool for extracting single-cell variant information from single-cell sequencing datasets. VarTrix is **not** a variant calling tool. Users must provide a variant call set that they have previously generated through other means. VarTrix is useful for evaluating heterogeneity within a single-cell sample, which means that the types of variants that will be useful to a user are either *somatic* or *contained within a copy number variant (CNV) event*.
+VarTrix is a software tool for extracting single cell variant information from 10x Genomics single cell data. VarTrix will take a set of previously defined variant calls and use that to identify those variants in the single cell data. VarTrix does not perform variant calling. VarTrix is useful for evaluating heterogeneity within a sample, which means that the types of variants that will be useful to a user are either *somatic* or *contained within a copy number variant (CNV) event*.
+ 
+## Overview of how it works
+VarTrix uses Smith-Waterman alignment to evaluate reads that map to each known input variant locus and assign single cells to these variants. This process works on both 10x single cell gene expression datasets as well as 10x single cell DNA datasets.
 
-VarTrix uses Smith-Waterman alignment to evaluate reads that map to a known variant locus and assign single cells to these variants. This process works on both single-cell RNA sequencing datasets as well as single-cell DNA sequencing datasets.
-
-VarTrix works with any properly formatted sequence resolved VCF. VarTrix works with SNVs, insertions and deletions.
+VarTrix works with any properly formatted sequence resolved VCF. VarTrix works with SNVs, insertions and deletions. 
 
 At this point, all multi-allelic sites are ignored. They will still be a column in the final matrix to maintain ordering relative to the input VCF, but all values will be empty.
 
 ## Use cases
-VarTrix is useful for evaluating heterogeneity of single cell datasets, including tumor samples and cell lines. 
+VarTrix is useful for evaluating heterogeneity of 10x single cell datasets, including ones from tumor samples and cell lines. VarTrix can be used to evaluate either *somatic variants*  or *variants contained within a copy number variant (CNV) event*.
 
 ### scRNA-seq
-Allele specific expression in tumor samples can lead to strong correlations between the presence of a specific expressed variant and expression-based clustering. Overlaying the variant information with expression clustering can lead to new insight in to the cause of a specific cancer and to the accumulation of mutations that may lead to relapse or drug resistance.
-
-#### Input variants
-Generating variants from scRNA-seq datasets is challenging. Noise inherent in reverse transcription leads to a high false positive rate. We recommend looking at the Broad Institute's GATK and Mutect2 best practices guide for [calling variants in RNAseq](https://software.broadinstitute.org/gatk/documentation/article.php?id=3891). An alternative approach is to determine somatic variants using WGS data generated from the same sample as the scRNA-seq library.
+Allele specific expression in tumor samples can lead to strong correlations between the presence of a specific expressed variant and expression-based clustering. Overlaying the variant information with expression clustering can lead to new insights about specific diseases and to the accumulation of mutations that may lead to different phenotypes such as relapse or drug resistance.
 
 ### scDNA-seq
 Assignment of variants in scDNA data can improve understanding of tumor and cell line heterogeneity. Copy number expansion in tumor cells or chromothripsis in cell lines can lead to different allele fractions of germline variants being associated with subclonal populations. Somatic variants in tumor cells can be associated with subclonal populations and associated with subclones that lead to relapse. Similar to scRNA-seq datasets, variant assignment to specific cells can be overlaid with copy number based clustering.
+
+## Support
+This tool is not officially supported. If you have any comments, please submit a GitHub issue.
 
 ## Installation
 
@@ -28,10 +29,10 @@ VarTrix has automatically generated downloadable binaries for generic linux and 
 VarTrix is standard Rust executable project, that works with stable Rust >=1.13. Install Rust through the standard channels, then type `cargo build --release`. The executable will appear at `target/release/vartrix`. As usual it's important to use a release build to get good performance.
 
 ## Inputs
-VarTrix requires a pre-called variant set in VCF format, an associated set of alignments in BAM or CRAM format, and a genome FASTA file. All sequence names must match between the files. VarTrix also requires a cell barcodes file like the one produced by CellRanger.
+VarTrix requires a pre-called variant set in VCF format, an associated set of alignments in BAM or CRAM format, and a genome FASTA file. All sequence names must match between the files. VarTrix also requires a cell barcodes file produced by Cell Ranger, for single cell gene expression data, or Cell Ranger DNA, for single cell DNA data.
 
 ## Outputs
-VarTrix produces genome matrices in the same Matrix Market format that CellRanger uses. This is a sparse matrix format that can be read by common packages. The flag `--out-variants` can be used to produce an additional text file that acts as column labels for this matrix. The cell barcode file used as input are the row labels.
+VarTrix produces genome matrices in the same Matrix Market format that Cell Ranger uses. This is a sparse matrix format that can be read by common packages. The cell barcode file used as input are the row labels. The matrix will contain information about each variant for each cell barcode. The exact output is determined by the parameters that are set at runtime. In addition, the flag `--out-variants` can be used to produce an additional text file that acts as column labels for this matrix. 
 
 
 ## Usage
@@ -72,11 +73,9 @@ The default logging level will only report on errors. The next log level, `info`
 With the log level set to `info` or higher, upon the final scoring step, VarTrix will report on barcode/variant pairs that are inconsistent for potential manual inspection. This situation arises when multiple reads for a given barcode/variant combination have equal alignment scores to both the ref and alt haplotype. The most common cause for this is that this location is a multi-allelic site that was not reported as such in the VCF. This is most often seen in cancer samples with large copy number expansions. In these cases, VarTrix will not consider these reads when populating the matrix.
 
 ## Troubleshooting
-If you have any bug reports, feature requests, or questions about VarTrix please submit a GitHub issue. We will do our best to respond in a timely fashion and address your concerns. However, VarTrix is not an officially supported 10x Genomics software tool and so we cannot promise that we will be able to address all concerns.
+If any uncaught errors happen during execution, VarTrix uses the `human_panic` library which will package the full backtrace into a temporary file.
 
-If any uncaught errors happen during execution, VarTrix uses the `human_panic` library which will package the full backtrace into a temporary file. Please put the contents of this file in your GitHub issue.
-
-## Loading data into Seraut
+## Using VarTrix and Seraut to overlay variant information with gene expression clusters
 
 Below is some example code for using the output of VarTrix with Seraut to enable highlighting of variants on expression clusters.
 
