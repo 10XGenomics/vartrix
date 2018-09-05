@@ -178,8 +178,8 @@ fn _main(cli_args: Vec<String>) {
     // need to figure out how big to make the matrix, so just read the number of lines in the VCF
     let num_vars = rdr.records().count();
     info!("Initialized a {} variants x {} cell barcodes matrix", num_vars, cell_barcodes.len());
-    let mut matrix = TriMat::new((cell_barcodes.len(), num_vars));
-    let mut ref_matrix = TriMat::new((cell_barcodes.len(), num_vars));
+    let mut matrix = TriMat::new((num_vars, cell_barcodes.len()));
+    let mut ref_matrix = TriMat::new((num_vars, cell_barcodes.len()));
 
     let mut rdr = bcf::Reader::from_path(&vcf_file).unwrap(); // have to re-start the reader
 
@@ -229,28 +229,28 @@ fn _main(cli_args: Vec<String>) {
         metrics.num_not_useful += m.num_not_useful;
     }
 
-    for (j, results) in results.iter() {
+    for (i, results) in results.iter() {
         add_metrics(&mut metrics, &results.metrics);
         match scoring_method {
             "alt_frac" => { 
-                let result = alt_frac(&results, *j); 
-                for (i, r) in result {
-                    matrix.add_triplet(*i as usize, *j, r);
+                let result = alt_frac(&results, *i); 
+                for (j, r) in result {
+                    matrix.add_triplet(*i, *j as usize, r);
                 }
             },
             "consensus" => { 
-                let result = consensus_scoring(&results, *j); 
-                for (i, r) in result {
-                    matrix.add_triplet(*i as usize, *j, r);
+                let result = consensus_scoring(&results, *i); 
+                for (j, r) in result {
+                    matrix.add_triplet(*i, *j as usize, r);
                 }
             },
             "coverage" => { 
-                let result = coverage(&results, *j); 
-                for (i, r) in result.0 {
-                    matrix.add_triplet(*i as usize, *j, r);
+                let result = coverage(&results, *i); 
+                for (j, r) in result.0 {
+                    matrix.add_triplet(*i, *j as usize, r);
                 }
-                for (i, r) in result.1 {
-                    ref_matrix.add_triplet(*i as usize, *j, r);
+                for (j, r) in result.1 {
+                    ref_matrix.add_triplet(*i, *j as usize, r);
                 }
             },
             &_ => { panic!("Scoring method is invalid") },
