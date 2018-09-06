@@ -1,6 +1,6 @@
 # VarTrix
 
-VarTrix is a software tool for extracting single cell variant information from 10x Genomics single cell data. VarTrix will take a set of previously defined variant calls and use that to identify those variants in the single cell data. VarTrix does not perform variant calling. VarTrix is useful for evaluating heterogeneity within a sample, which means that the types of variants that will be useful to a user are either *somatic* or *contained within a copy number variant (CNV) event*.
+VarTrix is a software tool for extracting single cell variant information from 10x Genomics single cell data. VarTrix will take a set of previously defined variant calls and use that to identify those variants in the single cell data. VarTrix does not perform variant calling. VarTrix is useful for evaluating heterogeneity within a sample, which means that the types of variants that will be useful are either *somatic* or *contained within a copy number variant (CNV) event*. 
  
 ## Overview of how it works
 VarTrix uses Smith-Waterman alignment to evaluate reads that map to each known input variant locus and assign single cells to these variants. This process works on both 10x single cell gene expression datasets as well as 10x single cell DNA datasets.
@@ -12,11 +12,11 @@ At this point, all multi-allelic sites are ignored. They will still be a row in 
 ## Use cases
 VarTrix is useful for evaluating heterogeneity of 10x single cell datasets, including ones from tumor samples and cell lines. VarTrix can be used to evaluate either *somatic variants*  or *variants contained within a copy number variant (CNV) event*.
 
-### scRNA-seq
+### 10x Genomics Single Cell Gene Expression Data
 Allele specific expression in tumor samples can lead to strong correlations between the presence of a specific expressed variant and expression-based clustering. Overlaying the variant information with expression clustering can lead to new insights about specific diseases and to the accumulation of mutations that may lead to different phenotypes such as relapse or drug resistance.
 
-### scDNA-seq
-Assignment of variants in scDNA data can improve understanding of tumor and cell line heterogeneity. Copy number expansion in tumor cells or chromothripsis in cell lines can lead to different allele fractions of germline variants being associated with subclonal populations. Somatic variants in tumor cells can be associated with subclonal populations and associated with subclones that lead to relapse. Similar to scRNA-seq datasets, variant assignment to specific cells can be overlaid with copy number based clustering.
+### 10x Genomics Single Cell DNA Data
+Assignment of variants in scDNA data can improve understanding of tumor and cell line heterogeneity. Copy number expansion in tumor cells or chromothripsis in cell lines can lead to different allele fractions of germline variants being associated with subclonal populations. Somatic variants in tumor cells can be associated with subclonal populations and associated with subclones that lead to relapse. Similar to single cell gene expression datasets, variant assignment to specific cells can be overlaid with copy number based clustering.
 
 ## Support
 This tool is not officially supported. If you have any comments, please submit a GitHub issue.
@@ -30,6 +30,9 @@ VarTrix is standard Rust executable project, that works with stable Rust >=1.13.
 
 ## Inputs
 VarTrix requires a pre-called variant set in VCF format, an associated set of alignments in BAM or CRAM format, and a genome FASTA file. All sequence names must match between the files. VarTrix also requires a cell barcodes file produced by Cell Ranger, for single cell gene expression data, or Cell Ranger DNA, for single cell DNA data.
+
+### Generating Input Variants
+Pre-called variants to be used as input to VarTrix can be generated in many different ways such as gathering calls from existing variant databases or performing variant calling on bulk or single cell genome or transcriptome data. It is important to note that generating variants from bulk or single cell RNA-seq datasets is challenging. Noise inherent in reverse transcription leads to a high false positive rate. We recommend looking at the Broad Institute's GATK and Mutect2 best practices guide for [calling variants in RNAseq](https://software.broadinstitute.org/gatk/documentation/article.php?id=3891). An alternative approach is to determine somatic variants using WGS data generated from the same sample as the scRNA-seq library.
 
 ## Outputs
 VarTrix produces genome matrices in the same Matrix Market format that Cell Ranger uses. This is a sparse matrix format that can be read by common packages. The cell barcode file used as input are the column labels. The matrix will contain information about each variant for each cell barcode. The exact output is determined by the parameters that are set at runtime. In addition, the flag `--out-variants` can be used to produce an additional text file that acts as row labels for this matrix. The cell barcodes file passed to `--cell-barcodes` can be used as column labels.
