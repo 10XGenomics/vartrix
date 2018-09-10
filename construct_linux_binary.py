@@ -57,7 +57,7 @@ def upload_to_github(args):
     file_name = 'vartrix-{}-x86_64-linux.tar.gz'.format(tag)
     tarball = construct_tarball(args.target, args.extra_items, file_name)
     try:
-        release.upload_asset('application', 'vartrix', open(tarball, 'rb'), label=file_name)
+        release.upload_asset('application', file_name, open(tarball, 'rb'), label=file_name)
     except github3.GitHubError as e:
         raise Exception(e.errors)
 
