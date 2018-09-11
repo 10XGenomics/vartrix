@@ -97,7 +97,7 @@ fn get_args() -> clap::App<'static, 'static> {
              .long("scoring-method")
              .possible_values(&["consensus", "coverage", "alt_frac"])
              .default_value("consensus")
-             .help("Type of matrix to produce. Consensus means that cells with both ref and alt reads are given a 3, alt only reads a 2, and ref only reads a 1. Suitable for clustering.  Coverage requires that you set --ref-matrix to store the second matrix in. Alt_frac will report the fraction of alt reads."))
+             .help("Type of matrix to produce. In 'consensus' mode, cells with both ref and alt reads are given a 3, alt only reads a 2, and ref only reads a 1. Suitable for clustering.  In 'coverage' mode, it is required that you set --ref-matrix to store the second matrix in. The 'alt_frac' mode will report the fraction of alt reads, which is effectively the ratio of the alternate matrix to the sum of the alternate and coverage matrices."))
         .arg(Arg::with_name("ref_matrix")
              .long("ref-matrix")
              .value_name("OUTPUT_FILE")
