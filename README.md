@@ -3,6 +3,9 @@
 VarTrix is a software tool for extracting single cell variant information from 10x Genomics single cell data. VarTrix will take a set of previously defined variant calls and use that to identify those variants in the single cell data. VarTrix does not perform variant calling. VarTrix is useful for evaluating heterogeneity within a sample, which means that the types of variants that will be useful are either *somatic* or *contained within a copy number variant (CNV) event*. 
  
 ## Overview of how it works
+
+![overview](https://github.com/10xgenomics/vartrix/blob/master/VarTrix_WorkFlow.png)
+
 VarTrix uses Smith-Waterman alignment to evaluate reads that map to each known input variant locus and assign single cells to these variants. This process works on both 10x single cell gene expression datasets as well as 10x single cell DNA datasets.
 
 VarTrix works with any properly formatted sequence resolved VCF. VarTrix works with SNVs, insertions and deletions. 
