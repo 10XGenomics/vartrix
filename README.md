@@ -40,6 +40,11 @@ VarTrix is a standard Rust executable project, that works with stable Rust >=1.1
 
 If you need to compile from source, [install Rust](https://www.rust-lang.org/en-US/install.html), then type `cargo build --release` from within the directory containing the VarTrix source code. The executable will appear at `target/release/vartrix`. As usual it's important to use a release build to get good performance.
 
+## Testing
+If you have compiled VarTrix from source, you can run the tiny test dataset by typing the command `cargo test --release` from wthin the directory containing the VarTrix source code.
+
+The test data files in the `test/` folder also provide a simple example of the inputs and outputs for VarTrix.
+
 ## Inputs
 VarTrix requires a pre-called variant set in VCF format, an associated set of alignments in BAM or CRAM format, and a genome FASTA file. All sequence names must match between the files. VarTrix also requires a cell barcodes file produced by Cell Ranger, for single cell gene expression data, or Cell Ranger DNA, for single cell DNA data.
 
@@ -54,7 +59,7 @@ The matrix will contain information about each variant for each cell barcode. Th
 ## Usage
 From the directory containing the `vartrix` binary, run VarTrix as:
 
-    ./vartrix -v <path_to_input_vcf> -b <path_to_cellranger_bam> -f <path_to_fasta_file> -c <path_to_cell_barcodes_file> --o <path_for_output_matrix>
+    ./vartrix -v <path_to_input_vcf> -b <path_to_cellranger_bam> -f <path_to_fasta_file> -c <path_to_cell_barcodes_file> -o <path_for_output_matrix>
 
 ### Required arguments 
 
