@@ -19,14 +19,25 @@ Allele specific expression in tumor samples can lead to strong correlations betw
 Assignment of variants in scDNA data can improve understanding of tumor and cell line heterogeneity. Copy number expansion in tumor cells or chromothripsis in cell lines can lead to different allele fractions of germline variants being associated with subclonal populations. Somatic variants in tumor cells can be associated with subclonal populations and associated with subclones that lead to relapse. Similar to single cell gene expression datasets, variant assignment to specific cells can be overlaid with copy number based clustering.
 
 ## Support
-This tool is not officially supported. If you have any comments, please submit a GitHub issue.
+VarTrix is provided as an open-source tool for use by the community. Although we cannot provide full support for the software please submit a [GitHub Issue](https://github.com/10XGenomics/vartrix/issues) if you have any problems, questions or comments. We would also be happy to consider Pull Requests that fix bugs or provide enhancements.
 
 ## Installation
 
 VarTrix has automatically generated downloadable binaries for generic linux and Mac OSX under the [releases page](https://github.com/10XGenomics/vartrix/releases). The linux binaries are expected to work on [our supported Operating Systems](https://support.10xgenomics.com/os-support). 
 
+Download the appropriate binary and run
+
+    tar xvzf vartrix-v1.0-x86_64-apple-darwin.tar.gz
+
+or
+	tar xvzf vartrix-v1.0-x86_64-linux.tar.gz
+	
+to decompress it. This will produce a new directory containing the executable binary.  
+
 ## Compiling from source
-VarTrix is standard Rust executable project, that works with stable Rust >=1.13. Install Rust through the standard channels, then type `cargo build --release`. The executable will appear at `target/release/vartrix`. As usual it's important to use a release build to get good performance.
+VarTrix is a standard Rust executable project, that works with stable Rust >=1.13.
+
+If you need to compile from source, [install Rust](https://www.rust-lang.org/en-US/install.html), then type `cargo build --release` from within the directory containing the VarTrix source code. The executable will appear at `target/release/vartrix`. As usual it's important to use a release build to get good performance.
 
 ## Inputs
 VarTrix requires a pre-called variant set in VCF format, an associated set of alignments in BAM or CRAM format, and a genome FASTA file. All sequence names must match between the files. VarTrix also requires a cell barcodes file produced by Cell Ranger, for single cell gene expression data, or Cell Ranger DNA, for single cell DNA data.
@@ -35,20 +46,28 @@ VarTrix requires a pre-called variant set in VCF format, an associated set of al
 Pre-called variants to be used as input to VarTrix can be generated in many different ways such as gathering calls from existing variant databases or performing variant calling on bulk or single cell genome or transcriptome data. It is important to note that generating variants from bulk or single cell RNA-seq datasets is challenging. Noise inherent in reverse transcription leads to a high false positive rate. We recommend looking at the Broad Institute's GATK and Mutect2 best practices guide for [calling variants in RNAseq](https://software.broadinstitute.org/gatk/documentation/article.php?id=3891). An alternative approach is to determine somatic variants using WGS data generated from the same sample as the scRNA-seq library.
 
 ## Outputs
-VarTrix produces genome matrices in the same Matrix Market format that Cell Ranger uses. This is a sparse matrix format that can be read by common packages. The cell barcode file used as input are the column labels. The matrix will contain information about each variant for each cell barcode. The exact output is determined by the parameters that are set at runtime. In addition, the flag `--out-variants` can be used to produce an additional text file that acts as row labels for this matrix. The cell barcodes file passed to `--cell-barcodes` can be used as column labels.
+VarTrix produces genome matrices in the same [Market Exchange](https://support.10xgenomics.com/single-cell-gene-expression/software/pipelines/latest/output/matrices) format that Cell Ranger uses. This is a sparse matrix format that can be read by common packages. Column labels are the cell barcodes included in the cell barcode input file (specified with `--cell-barcodes`). If the `--out-variants` option is used, VarTrix will produce an additional text file of row names where each variant is named as `<chr>_<pos>`. 
 
+The matrix will contain information about each variant for each cell barcode. The exact output is determined by the [parameters that are used](#usage).  
 
 ## Usage
+From the directory containing the `vartrix` binary, run VarTrix as:
 
-`--vcf (-v)`: Input VCF formatted variants to be assigned. REQUIRED.
+    ./vartrix -v <path_to_input_vcf> -b <path_to_cellranger_bam> -f <path_to_fasta_file> -c <path_to_cell_barcodes_file> --o <path_for_output_matrix>
 
-`--bam (-b)`: Input Cell Ranger BAM. This BAM must have the `CB` tag to define the barcodes of cell barcodes. Must also have an index file. REQUIRED.
+### Required arguments 
 
-`--fasta (-f)`: A FASTA file for the reference genome used in the BAM. Must have a index file. REQUIRED.
+`--vcf (-v)`: Input VCF formatted variants to be assigned.
+
+`--bam (-b)`: Input Cell Ranger BAM. This BAM must have the `CB` tag to define the barcodes of cell barcodes. Must also have an index file.
+
+`--fasta (-f)`: A FASTA file for the reference genome used in the BAM. Must have a index file.
 
 `--cell-barcodes (-c)`: A cell barcodes file as produced by Cell Ranger that defines which barcodes were called as cells. One barcode per line. In Cell Ranger runs, this can be found in the sub-folder `outs/filtered_gene_bc_matrices_mex/${refGenome}/barcodes.tsv` where `${refGenome}` is the name of the reference genome used in your Cell Ranger run. This file can be used as column labels for the output matrix. REQUIRED.
 
 `--out-matrix (-o)`: The path to write a Market Matrix format matrix out to. This is the same sparse matrix format used by Cell Ranger, and can be loaded into external tools like Seraut. REQUIRED.
+
+### Options
 
 `--out-variants`: The path to write a neat formatting of the variants to for loading into external tools. This file represents the row labels for `--out-matrix` in the format of `$chromosome_$pos`.
 
@@ -70,15 +89,18 @@ VarTrix produces genome matrices in the same Matrix Market format that Cell Rang
 
 
 ## Log level considerations
-The default logging level will only report on errors. The next log level, `info`, will report on basic information like the number of variants and barcodes seen, as well as reporting on sites that are problematic (see below). In `debug` mode, the constructed haplotypes and alignments for every single read will be reported. For large datasets, this can produce an extremely large log file.
+The `--log-level` option sets the amount of information recorded in the output log. 
+
+The default logging level (`error`) will only report on errors. The next log level, `info`, will report on basic information like the number of variants and barcodes seen, as well as reporting on sites that are problematic (see below). In `debug` mode, the constructed haplotypes and alignments for every single read will be reported. For large datasets, this can produce an extremely large log file.
 
 ### Problematic sites
 With the log level set to `info` or higher, upon the final scoring step, VarTrix will report on barcode/variant pairs that are inconsistent for potential manual inspection. This situation arises when multiple reads for a given barcode/variant combination have equal alignment scores to both the ref and alt haplotype. The most common cause for this is that this location is a multi-allelic site that was not reported as such in the VCF. This is most often seen in cancer samples with large copy number expansions. In these cases, VarTrix will not consider these reads when populating the matrix.
 
 ## Troubleshooting
-If any uncaught errors happen during execution, VarTrix uses the `human_panic` library which will package the full backtrace into a temporary file.
+If any uncaught errors happen during execution, VarTrix uses the [`human_panic`](https://github.com/rust-clique/human-panic) library which will package the full backtrace into a temporary file. Please include this if you submit a Github issue asking for help to resolve a crash.
 
-## Using VarTrix and Seraut to overlay variant information with gene expression clusters
+## Using VarTrix and Seurat to overlay variant information with gene expression clusters
+You can use the [Seurat](https://satijalab.org/seurat/) package to combine with output of VarTrix with other analyses of your single cell expressioon data. 
 
 Below is some example code for using the output of VarTrix with Seraut to enable highlighting of variants on expression clusters.
 
@@ -159,7 +181,7 @@ seurat_obj <- CreateSeuratObject(raw.data = seurat.data, min.cells = 1, project 
 seurat_obj <- AddMetaData(object = seurat_obj, metadata = gt_chr1_1624866)
 ```
 
-Now process your data to the point of generating a tSNE. If you have never done this before, consult the [Seraut tutorial](https://satijalab.org/seurat/get_started.html).
+Now process your data to the point of generating a tSNE. If you have never done this before, consult the [Seurat tutorial](https://satijalab.org/seurat/get_started.html).
 
 
 ### Plot the tSNE with variants layered
