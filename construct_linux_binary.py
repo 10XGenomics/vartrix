@@ -30,7 +30,7 @@ def construct_tarball(target, extra_items, file_name):
     shutil.copy(target, os.path.join(o, tar_dir, os.path.basename(target)))
     for f in extra_items:
         shutil.copy(f, os.path.join(o, tar_dir, os.path.basename(f)))
-    subprocess.check_call(['strip', os.path.join(o, tar_dir, os.path.basename(target))])
+    #subprocess.check_call(['strip', os.path.join(o, tar_dir, os.path.basename(target))])
     os.chdir(o)
     subprocess.check_call(['tar', 'czf', file_name, tar_dir])
     tarball = os.path.join(o, file_name)
