@@ -170,7 +170,7 @@ fn _main(cli_args: Vec<String>) {
 
     let _ = SimpleLogger::init(ll, Config::default());
 
-    check_inputs_exist(fasta_file, vcf_file, bam_file, cell_barcodes);
+    check_inputs_exist(fasta_file, vcf_file, bam_file, cell_barcodes, out_matrix_path, ref_matrix_path);
 
     let mut rdr = bcf::Reader::from_path(&vcf_file).unwrap();
     let cell_barcodes = load_barcodes(&cell_barcodes).unwrap();
@@ -350,14 +350,30 @@ impl Clone for ReaderWrapper {
 }
 
 
-pub fn check_inputs_exist(fasta_file: &str, vcf_file: &str, bam_file: &str, cell_barcodes: &str) {
-        for path in [fasta_file, vcf_file, bam_file, cell_barcodes].iter() {
+pub fn check_inputs_exist(fasta_file: &str, vcf_file: &str, bam_file: &str, cell_barcodes: &str,
+                          out_matrix_path: &str, out_ref_matrix_path: &str) {
+    for path in [fasta_file, vcf_file, bam_file, cell_barcodes].iter() {
         if !Path::new(&path).exists() {
             error!("File {} does not exist", path);
             process::exit(1);
         }
     }
-    // check for indices as well
+
+    // check if output directories exist
+    for path in &[out_matrix_path, out_ref_matrix_path] {
+        let _dir = Path::new(path).parent();
+        if _dir.is_none() {
+            error!("Unable to parse directory from {}", path);
+            process::exit(1);
+        }
+        let dir = _dir.unwrap();
+        if (dir.to_str().unwrap().len() > 0) & !dir.exists() {
+            error!("Output directory {:?} does not exist", dir);
+            process::exit(1);
+        }
+    }
+    
+    // check for fasta and BAM/CRAM indices as well
     let fai = fasta_file.to_owned() + ".fai";
     if !Path::new(&fai).exists() {
         error!("File {} does not exist", fai);
