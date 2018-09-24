@@ -61,15 +61,17 @@ VarTrix produces genome matrices in the same Matrix Market format that Cell Rang
 
 `--ref-matrix`: If `--scoring-method` is set to `coverage`, this must also be set. This is the path that the reference coverage matrix will be written to.
 
-`--threads`: The number of parallel threads to use.
+`--umi`: Boolean flag -- consider UMIs when calculating coverage? In this mode, the BAM must have a `UB` tag reporting the UMI for a given alignment. A consensus of the most common base for a given UMI will be used. This will mostly effect the `coverage` and `alt_frac` modes. DEFAULT: false.
+
+`--threads`: The number of parallel threads to use. DEFAULT: 1.
 
 `--log-level`: One of `info`, `error` or `debug`. Increasing levels of logging. `Debug` mode is extremely verbose and will report on the fate of every single read. DEFAULT: error.
 
 `--mapq`: The minimum mapping quality of reads to be considered. Default: 0.
 
-`--primary-alignments`: Boolean flag -- consider only primary alignments? Default: false.
+`--primary-alignments`: Boolean flag -- consider only primary alignments? DEFAULT: false.
 
-`--no-duplicates`: Boolean flag -- ignore alignments marked as duplicates? Take care when turning this on with scRNA-seq data, as duplicates are marked in that pipeline for every extra read sharing the same UMI/CB pair, which will result in most variant data being lost. Default: false.
+`--no-duplicates`: Boolean flag -- ignore alignments marked as duplicates? Take care when turning this on with scRNA-seq data, as duplicates are marked in that pipeline for every extra read sharing the same UMI/CB pair, which will result in most variant data being lost. DEFAULT: false.
 
 
 ## Log level considerations
