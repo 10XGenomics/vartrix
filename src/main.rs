@@ -259,19 +259,19 @@ fn _main(cli_args: Vec<String>) {
             add_metrics(&mut metrics, &scores.metrics);
             match scoring_method {
                 "alt_frac" => { 
-                    let result = alt_frac(&scores, *i); 
+                    let result = alt_frac(&scores, *i, args_holder.use_umi); 
                     for (j, r) in result {
                         matrix.add_triplet(*i, j as usize, r);
                     }
                 },
                 "consensus" => { 
-                    let result = consensus_scoring(&scores, *i); 
+                    let result = consensus_scoring(&scores, *i, args_holder.use_umi); 
                     for (j, r) in result {
                         matrix.add_triplet(*i, j as usize, r);
                     }
                 },
                 "coverage" => { 
-                    let result = coverage(&scores, *i); 
+                    let result = coverage(&scores, *i, args_holder.use_umi); 
                     for (j, r) in result.0 {
                         matrix.add_triplet(*i, j as usize, r);
                     }
@@ -705,7 +705,7 @@ pub struct EvaluateAlnResults {
 }
 
 
-pub struct CellUmiCalls {
+pub struct CellCalls {
     cell_index: u32,
     calls: Vec<i8>,
 }
@@ -743,48 +743,62 @@ pub fn convert_to_counts(r: Vec<i8>) -> CellCounts {
 }
 
 
-fn parse_scores(scores: &Vec<Scores>) -> Vec<CellUmiCalls> {
+fn parse_scores(scores: &Vec<Scores>, umi: bool) -> Vec<CellCalls> {
     // parse the score vector into collapsed calls
     let mut r = Vec::new();
 
     for (cell_index, cell_scores) in &scores.into_iter().group_by(|s| s.cell_index) {
-        // umi -> best score for this cell
-        // if not in UMI mode, all UMI are different so this will not do anything
-        let mut parsed_scores = HashMap::new();
-        for score in cell_scores.into_iter() {
-            let eval = evaluate_scores(score.ref_score, score.alt_score);
-            if eval.is_none() {
-                continue;
+        if umi == true {
+            // map of UMI to Score objects; keep track of all Scores for a given CB/UMI pair
+            let mut parsed_scores = HashMap::new();
+            for score in cell_scores.into_iter() {
+                let eval = evaluate_scores(score.ref_score, score.alt_score);
+                if eval.is_none() {
+                    continue;
+                }
+                parsed_scores.entry(&score.umi).or_insert(Vec::new()).push(eval.unwrap());
             }
-            parsed_scores.entry(&score.umi).or_insert(Vec::new()).push(eval.unwrap());
+            // collapse each UMI into a consensus value
+            let mut collapsed_scores = Vec::new();
+            for (_umi, v) in parsed_scores.into_iter() {
+                let counts = convert_to_counts(v);
+                let ref_frac = counts.ref_count as f64 / (counts.alt_count as f64 + counts.ref_count as f64);
+                let alt_frac = counts.alt_count as f64 / (counts.alt_count as f64 + counts.ref_count as f64);
+                if (counts.unk_count > 1) | ((ref_frac < CONSENSUS_THRESHOLD) & (alt_frac < CONSENSUS_THRESHOLD)) { 
+                    collapsed_scores.push(UNKNOWN_VALUE);
+                }
+                else if alt_frac >= CONSENSUS_THRESHOLD {
+                    collapsed_scores.push(ALT_VALUE);
+                }
+                else {
+                    assert!(ref_frac >= CONSENSUS_THRESHOLD);
+                    collapsed_scores.push(REF_VALUE);
+                }
+            }
+            let counts = CellCalls {cell_index: cell_index, calls: collapsed_scores};
+            r.push(counts);
         }
-
-        // collapse each UMI into a consensus value
-        let mut collapsed_scores = Vec::new();
-        for (_umi, v) in parsed_scores.into_iter() {
-            let counts = convert_to_counts(v);
-            let ref_frac = counts.ref_count as f64 / (counts.alt_count as f64 + counts.ref_count as f64);
-            let alt_frac = counts.alt_count as f64 / (counts.alt_count as f64 + counts.ref_count as f64);
-            if (counts.unk_count > 1) | ((ref_frac < CONSENSUS_THRESHOLD) & (alt_frac < CONSENSUS_THRESHOLD)) { 
-                collapsed_scores.push(UNKNOWN_VALUE);
+        else {
+            let mut scores = Vec::new();
+            for score in cell_scores.into_iter() {
+                let _eval = evaluate_scores(score.ref_score, score.alt_score);
+                if _eval.is_none() {
+                    continue;
+                }
+                let eval = _eval.unwrap();
+                scores.push(eval);
             }
-            else if alt_frac >= CONSENSUS_THRESHOLD {
-                collapsed_scores.push(ALT_VALUE);
-            }
-            else {
-                assert!(ref_frac >= CONSENSUS_THRESHOLD);
-                collapsed_scores.push(REF_VALUE);
-            }
+            let counts = CellCalls {cell_index: cell_index, calls: scores};
+            // map of CB to Score objects. This is basically trivial in the non-UMI case
+            r.push(counts);
         }
-        let counts = CellUmiCalls {cell_index: cell_index, calls: collapsed_scores};
-        r.push(counts);
     }
     r
 }
 
 
-pub fn consensus_scoring(results: &EvaluateAlnResults, i: usize) -> Vec<(u32, f64)> {
-    let parsed_scores = parse_scores(&results.scores);
+pub fn consensus_scoring(results: &EvaluateAlnResults, i: usize, umi: bool) -> Vec<(u32, f64)> {
+    let parsed_scores = parse_scores(&results.scores, umi);
     let mut result = Vec::new();
     for s in parsed_scores.into_iter() {
         let counts = convert_to_counts(s.calls);
@@ -806,8 +820,8 @@ pub fn consensus_scoring(results: &EvaluateAlnResults, i: usize) -> Vec<(u32, f6
 }
 
 
-pub fn alt_frac(results: &EvaluateAlnResults, i: usize) -> Vec<(u32, f64)> {
-    let parsed_scores = parse_scores(&results.scores);
+pub fn alt_frac(results: &EvaluateAlnResults, i: usize, umi: bool) -> Vec<(u32, f64)> {
+    let parsed_scores = parse_scores(&results.scores, umi);
     let mut result = Vec::new();
     for s in parsed_scores.into_iter() {
         let counts = convert_to_counts(s.calls);
@@ -824,8 +838,8 @@ pub fn alt_frac(results: &EvaluateAlnResults, i: usize) -> Vec<(u32, f64)> {
 }
 
 
-pub fn coverage(results: &EvaluateAlnResults, i: usize) -> (Vec<(u32, f64)>, Vec<(u32, f64)>) {
-    let parsed_scores = parse_scores(&results.scores);
+pub fn coverage(results: &EvaluateAlnResults, i: usize, umi: bool) -> (Vec<(u32, f64)>, Vec<(u32, f64)>) {
+    let parsed_scores = parse_scores(&results.scores, umi);
     let mut result = (Vec::new(), Vec::new());
     for s in parsed_scores.into_iter() {
         let counts = convert_to_counts(s.calls);
@@ -920,6 +934,29 @@ mod tests {
         assert_eq!(seen_mat.to_csr(), expected_mat.to_csr());
         let seen_mat: TriMat<usize> = read_matrix_market(out_ref).unwrap();
         let expected_mat: TriMat<usize> = read_matrix_market("test/test_coverage_ref.mtx").unwrap();
+        assert_eq!(seen_mat.to_csr(), expected_mat.to_csr());
+    }
+
+    #[test]
+    fn test_coverage_matrices_umi() {
+        let mut cmds = Vec::new();
+        let tmp_dir = tempdir().unwrap();
+        let out_file = tmp_dir.path().join("result.mtx");
+        let out_file = out_file.to_str().unwrap();
+        let out_ref = tmp_dir.path().join("result_ref.mtx");
+        let out_ref = out_ref.to_str().unwrap();
+        for l in &["vartrix", "-v", "test/test.vcf", "-b", "test/test.bam",
+                   "-f", "test/test.fa", "-c", "test/barcodes.tsv", "--umi",
+                   "-o", out_file, "-s", "coverage", "--ref-matrix", out_ref] {
+            cmds.push(l.to_string());
+        }
+        _main(cmds);
+
+        let seen_mat: TriMat<usize> = read_matrix_market(out_file).unwrap();
+        let expected_mat: TriMat<usize> = read_matrix_market("test/test_coverage_umi.mtx").unwrap();
+        assert_eq!(seen_mat.to_csr(), expected_mat.to_csr());
+        let seen_mat: TriMat<usize> = read_matrix_market(out_ref).unwrap();
+        let expected_mat: TriMat<usize> = read_matrix_market("test/test_coverage_ref_umi.mtx").unwrap();
         assert_eq!(seen_mat.to_csr(), expected_mat.to_csr());
     }
 
