@@ -303,6 +303,12 @@ fn _main(cli_args: Vec<String>) {
         write_variants(out_variants, vcf_file);
         debug!("Wrote matrix file");
     }
+
+    // warn the user if they may have made a mistake
+    let sum = matrix.data().iter().fold(0.0, |a, &b| a + b);
+    if sum == 0.0 {
+        error!("The resulting matrix has a sum of 0. Did you use the --umi flag on data without UMIs?")
+    }
 }
 
 
@@ -605,13 +611,14 @@ pub fn evaluate_alns(bam: &mut bam::IndexedReader,
         let cell_index = cell_index.unwrap();
         
         let _umi = get_umi(&rec);
-        if args.use_umi == true & _umi.is_none() {
+        if (args.use_umi == true) & _umi.is_none() {
             debug!("{} skipping read {} due to not having a UMI",
                     locus_str, String::from_utf8(rec.qname().to_vec()).unwrap());
             r.metrics.num_non_umi += 1;
+            continue;
         }
         // if no UMIs in this dataset, just plug in dummy UMI
-        let umi = if args.use_umi == true {vec![1 as u8]} else {_umi.unwrap()};
+        let umi = if args.use_umi == false {vec![1 as u8]} else {_umi.unwrap()};
 
         let seq = &rec.seq().as_bytes();
 
@@ -957,6 +964,53 @@ mod tests {
         assert_eq!(seen_mat.to_csr(), expected_mat.to_csr());
         let seen_mat: TriMat<usize> = read_matrix_market(out_ref).unwrap();
         let expected_mat: TriMat<usize> = read_matrix_market("test/test_coverage_ref_umi.mtx").unwrap();
+        assert_eq!(seen_mat.to_csr(), expected_mat.to_csr());
+    }
+
+    #[test]
+    fn test_coverage_matrices_umi_dna() {
+        // this test should produce an empty pair of matrices
+        let mut cmds = Vec::new();
+        let tmp_dir = tempdir().unwrap();
+        let out_file = tmp_dir.path().join("result.mtx");
+        let out_file = out_file.to_str().unwrap();
+        let out_ref = tmp_dir.path().join("result_ref.mtx");
+        let out_ref = out_ref.to_str().unwrap();
+        for l in &["vartrix", "-v", "test/test_dna.vcf", "-b", "test/test_dna.bam",
+                   "-f", "test/test_dna.fa", "-c", "test/dna_barcodes.tsv", "--umi",
+                   "-o", out_file, "-s", "coverage", "--ref-matrix", out_ref] {
+            cmds.push(l.to_string());
+        }
+        _main(cmds);
+
+        let seen_mat: TriMat<usize> = read_matrix_market(out_file).unwrap();
+        let expected_mat: TriMat<usize> = read_matrix_market("test/test_dna_umi.mtx").unwrap();
+        assert_eq!(seen_mat.to_csr(), expected_mat.to_csr());
+        let seen_mat: TriMat<usize> = read_matrix_market(out_ref).unwrap();
+        let expected_mat: TriMat<usize> = read_matrix_market("test/test_dna_ref_umi.mtx").unwrap();
+        assert_eq!(seen_mat.to_csr(), expected_mat.to_csr());
+    }
+
+    #[test]
+    fn test_coverage_matrices_dna() {
+        let mut cmds = Vec::new();
+        let tmp_dir = tempdir().unwrap();
+        let out_file = tmp_dir.path().join("result.mtx");
+        let out_file = out_file.to_str().unwrap();
+        let out_ref = tmp_dir.path().join("result_ref.mtx");
+        let out_ref = out_ref.to_str().unwrap();
+        for l in &["vartrix", "-v", "test/test_dna.vcf", "-b", "test/test_dna.bam",
+                   "-f", "test/test_dna.fa", "-c", "test/dna_barcodes.tsv",
+                   "-o", out_file, "-s", "coverage", "--ref-matrix", out_ref] {
+            cmds.push(l.to_string());
+        }
+        _main(cmds);
+
+        let seen_mat: TriMat<usize> = read_matrix_market(out_file).unwrap();
+        let expected_mat: TriMat<usize> = read_matrix_market("test/test_dna.mtx").unwrap();
+        assert_eq!(seen_mat.to_csr(), expected_mat.to_csr());
+        let seen_mat: TriMat<usize> = read_matrix_market(out_ref).unwrap();
+        let expected_mat: TriMat<usize> = read_matrix_market("test/test_dna_ref.mtx").unwrap();
         assert_eq!(seen_mat.to_csr(), expected_mat.to_csr());
     }
 
