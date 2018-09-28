@@ -753,7 +753,6 @@ pub fn convert_to_counts(r: Vec<i8>) -> CellCounts {
 fn parse_scores(scores: &Vec<Scores>, umi: bool) -> Vec<CellCalls> {
     // parse the score vector into collapsed calls
     let mut r = Vec::new();
-
     for (cell_index, cell_scores) in &scores.into_iter().group_by(|s| s.cell_index) {
         if umi == true {
             // map of UMI to Score objects; keep track of all Scores for a given CB/UMI pair
@@ -769,9 +768,10 @@ fn parse_scores(scores: &Vec<Scores>, umi: bool) -> Vec<CellCalls> {
             let mut collapsed_scores = Vec::new();
             for (_umi, v) in parsed_scores.into_iter() {
                 let counts = convert_to_counts(v);
-                let ref_frac = counts.ref_count as f64 / (counts.alt_count as f64 + counts.ref_count as f64);
-                let alt_frac = counts.alt_count as f64 / (counts.alt_count as f64 + counts.ref_count as f64);
-                if (counts.unk_count > 1) | ((ref_frac < CONSENSUS_THRESHOLD) & (alt_frac < CONSENSUS_THRESHOLD)) { 
+                debug!("cell_index {} / UMI {} saw counts ref: {} alt: {} unk: {}", &cell_index, String::from_utf8(_umi.clone()).unwrap(), counts.ref_count, counts.alt_count, counts.unk_count);
+                let ref_frac = counts.ref_count as f64 / (counts.alt_count as f64 + counts.ref_count as f64 + counts.unk_count as f64);
+                let alt_frac = counts.alt_count as f64 / (counts.alt_count as f64 + counts.ref_count as f64 + counts.unk_count as f64);
+                if (ref_frac < CONSENSUS_THRESHOLD) & (alt_frac < CONSENSUS_THRESHOLD) { 
                     collapsed_scores.push(UNKNOWN_VALUE);
                 }
                 else if alt_frac >= CONSENSUS_THRESHOLD {
@@ -782,6 +782,7 @@ fn parse_scores(scores: &Vec<Scores>, umi: bool) -> Vec<CellCalls> {
                     collapsed_scores.push(REF_VALUE);
                 }
             }
+            debug!("cell index {} saw calls {:?}", cell_index, collapsed_scores);
             let counts = CellCalls {cell_index: cell_index, calls: collapsed_scores};
             r.push(counts);
         }
@@ -795,6 +796,7 @@ fn parse_scores(scores: &Vec<Scores>, umi: bool) -> Vec<CellCalls> {
                 let eval = _eval.unwrap();
                 scores.push(eval);
             }
+            debug!("cell index {} saw calls {:?}", cell_index, scores);
             let counts = CellCalls {cell_index: cell_index, calls: scores};
             // map of CB to Score objects. This is basically trivial in the non-UMI case
             r.push(counts);
