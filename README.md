@@ -57,7 +57,7 @@ VarTrix produces genome matrices in the same Matrix Market format that Cell Rang
 
 `--padding`: The amount of padding around the variant to use when constructing the reference and alternative haplotype for alignment. This should be no shorter than your read length. DEFAULT: 100bp.
 
-`--scoring-method (-s)`: The scoring method to be used in the output matrix. In the default `consensus` mode, the matrix will have a `1` if all reads at the position support the ref allele, a `2` if one or more reads support the alt allele, and a `3` if one or more reads support both the alt and the ref allele. In the `alt_frac` mode, the output matrix will have the fraction of alternate allele reads seen at this position. In the `coverage` mode, two matrices are produced. The matrix sent to `--out-matrix` is the number of alt reads seen, and the matrix sent to `--ref-matrix` is the number of ref reads seen. DEFAULT: consensus.
+`--scoring-method (-s)`: The scoring method to be used in the output matrix. In the default `consensus` mode, the matrix will have a `1` if all reads at the position support the ref allele, a `2` if one or more reads support the alt allele, and a `3` if one or more reads support both the alt and the ref allele. In the `alt_frac` mode, the output matrix will have the fraction of alternate allele reads seen at this position. In the `coverage` mode, two matrices are produced. The matrix sent to `--out-matrix` is the number of alt reads seen, and the matrix sent to `--ref-matrix` is the number of ref reads seen. See the scoring method section for mode tails. DEFAULT: consensus.
 
 `--ref-matrix`: If `--scoring-method` is set to `coverage`, this must also be set. This is the path that the reference coverage matrix will be written to.
 
@@ -73,6 +73,10 @@ VarTrix produces genome matrices in the same Matrix Market format that Cell Rang
 
 `--no-duplicates`: Boolean flag -- ignore alignments marked as duplicates? Take care when turning this on with scRNA-seq data, as duplicates are marked in that pipeline for every extra read sharing the same UMI/CB pair, which will result in most variant data being lost. DEFAULT: false.
 
+## Scoring method
+In all output modes, each alignment is evaluated by looking at which haplotype provides the higher alignment score. Each alignment is then assigned a value of `{-1, 1, 2}` for being ambiguous, reference supporting and alternate supporting respectively. If the `--umi` flag is set, then a consensus is taken across each UMI for a given cell. Each UMI must exceed a hardcoded 90% threshold for supporting the same allele or that UMI is set to `-1`. Only positive values will be considered when populating the final output table.
+
+In `--umi` mode, the coverage table reports the number of unambiguous UMIs that support reference or alternate allele per cell. 
 
 ## Log level considerations
 The default logging level will only report on errors. The next log level, `info`, will report on basic information like the number of variants and barcodes seen, as well as reporting on sites that are problematic (see below). In `debug` mode, the constructed haplotypes and alignments for every single read will be reported. For large datasets, this can produce an extremely large log file.
