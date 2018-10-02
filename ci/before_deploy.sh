@@ -30,7 +30,7 @@ mk_tarball() {
 
     # Copy the vartrix binary and strip it.
     cp "target/$TARGET/release/vartrix" "$staging/vartrix"
-    "${gcc_prefix}strip" "$staging/vartrix"
+    #"${gcc_prefix}strip" "$staging/vartrix"
     # Copy the licenses and README.
     cp {README.md,LICENSE} "$staging/"
 
