@@ -275,16 +275,31 @@ fn _main(cli_args: Vec<String>) {
     info!("Number of alignments skipped due to not being associated with a cell barcode: {}", metrics.num_not_cell_bc);
     info!("Number of alignments skipped due to not being useful: {}", metrics.num_not_useful);
 
-    let _ = write_matrix_market(&out_matrix_path as &str, &matrix).unwrap();
+    let has_written = write_matrix_market(&out_matrix_path as &str, &matrix);
+    match has_written {
+        Ok(_) => {
+            debug!("Wrote matrix file");
+        }
+        Err(err) => {
+            error!("Unable to write matrix file. Error: {}", err);
+        }
+    }
     if args.is_present("ref_matrix") {
-        let _ = write_matrix_market(&ref_matrix_path as &str, &ref_matrix).unwrap();
-        debug!("Wrote reference matrix file");
+        let has_written_ref = write_matrix_market(&ref_matrix_path as &str, &ref_matrix);
+        match has_written_ref {
+            Ok(_) => {
+                debug!("Wrote reference matrix file");
+            }
+            Err(err) => {
+                error!("Unable to write reference matrix file. Error: {}", err);
+            }
+        }
     }
 
     if args.is_present("out_variants") {
         let out_variants = args.value_of("out_variants").expect("Out variants path flag set but no value");
         write_variants(out_variants, vcf_file);
-        debug!("Wrote matrix file");
+        debug!("Wrote variants file");
     }
 }
 
