@@ -1,6 +1,6 @@
 [package]
 name = "vartrix"
-version = "1.0.1"
+version = "1.1.0"
 authors = ["Ian Fiddes <ian.fiddes@10xgenomics.com>", "Patrick Marks <patrick@10xgenomics.com>"]
 
 [dependencies]
@@ -17,6 +17,7 @@ human-panic = "1.0.1"
 simplelog = "0.5.0"
 log = "*"
 tempfile = "*"
+itertools = "*"
 
 [profile.release]
 debug = true
