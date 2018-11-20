@@ -129,7 +129,11 @@ fn get_args() -> clap::App<'static, 'static> {
              .help("Do not consider duplicate alignments"))
         .arg(Arg::with_name("umi")
              .long("umi")
-             .help("Consider UMI information when populating coverage matrices?"));
+             .help("Consider UMI information when populating coverage matrices?"))
+        .arg(Arg::with_name("bam_tag")
+             .long("bam-tag")
+             .default_value("CB")
+             .help("BAM tag to consider for marking cells?"));
         args
 }
 
@@ -167,6 +171,7 @@ fn _main(cli_args: Vec<String>) {
     let duplicates = args.is_present("no_duplicates");
     let use_umi = args.is_present("umi");
     let ll = args.value_of("log_level").unwrap();
+    let bam_tag = args.value_of("bam_tag").unwrap_or_default();
 
     let ll = match ll {
         "info" => LevelFilter::Info,
@@ -224,6 +229,7 @@ fn _main(cli_args: Vec<String>) {
     mapq: mapq,
     duplicates: duplicates,
     use_umi: use_umi,
+    bam_tag: bam_tag.to_string(),
     };
 
     let pool = rayon::ThreadPoolBuilder::new().num_threads(threads).build().unwrap();
@@ -320,6 +326,7 @@ pub struct Arguments {
     mapq: u8,
     duplicates: bool,
     use_umi: bool,
+    bam_tag: String,
 }
 
 
@@ -511,8 +518,8 @@ pub fn load_barcodes(filename: impl AsRef<Path>) -> Result<HashMap<Vec<u8>, u32>
 }
 
 
-pub fn get_cell_barcode(rec: &Record, cell_barcodes: &HashMap<Vec<u8>, u32>) -> Option<u32> {
-    match rec.aux(b"CB") {
+pub fn get_cell_barcode(rec: &Record, cell_barcodes: &HashMap<Vec<u8>, u32>, bam_tag: &String) -> Option<u32> {
+    match rec.aux(bam_tag.as_bytes()) {
         Some(Aux::String(hp)) => {
             let cb = hp.to_vec();
             let cb_index = cell_barcodes.get(&cb);
@@ -620,7 +627,7 @@ pub fn evaluate_alns(bam: &mut bam::IndexedReader,
             continue;
         }
 
-        let cell_index = get_cell_barcode(&rec, cell_barcodes);
+        let cell_index = get_cell_barcode(&rec, cell_barcodes, &args.bam_tag);
         if cell_index.is_none() {
             debug!("{} skipping read {} due to not having a cell barcode",
                     locus_str, String::from_utf8(rec.qname().to_vec()).unwrap());
