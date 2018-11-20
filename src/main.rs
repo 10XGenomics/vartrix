@@ -185,8 +185,7 @@ fn _main(cli_args: Vec<String>) {
     // need to figure out how big to make the matrix, so just read the number of lines in the VCF
     let num_vars = rdr.records().count();
     if num_vars == 0 {
-        error!("Zero variants found in input VCF.");
-        process::exit(1);
+        error!("Warning! Zero variants found in input VCF. Output matrices will be by definition empty but will still be generated.");
     }
     info!("Initialized a {} variants x {} cell barcodes matrix", num_vars, cell_barcodes.len());
     let mut matrix = TriMat::new((num_vars, cell_barcodes.len()));
@@ -206,7 +205,8 @@ fn _main(cli_args: Vec<String>) {
     }
 
     let mut rec_chunks = Vec::new();
-    for rec_chunk in recs.chunks(num_vars / threads) {
+    let chunk_size = max(num_vars / threads, 1);
+    for rec_chunk in recs.chunks(chunk_size) {
         rec_chunks.push(rec_chunk);
     }
 
