@@ -133,7 +133,11 @@ fn get_args() -> clap::App<'static, 'static> {
         .arg(Arg::with_name("bam_tag")
              .long("bam-tag")
              .default_value("CB")
-             .help("BAM tag to consider for marking cells?"));
+             .help("BAM tag to consider for marking cells?"))
+        .arg(Arg::with_name("valid_chars")
+             .long("valid-chars")
+             .default_value("ATGCatgc")
+             .help("Valid characters in an alternative haplotype. This prevents non sequence-resolved variants from being genotyped."));
         args
 }
 
@@ -172,6 +176,7 @@ fn _main(cli_args: Vec<String>) {
     let use_umi = args.is_present("umi");
     let ll = args.value_of("log_level").unwrap();
     let bam_tag = args.value_of("bam_tag").unwrap_or_default();
+    let valid_chars = args.value_of("valid_chars").unwrap_or_default();
 
     let ll = match ll {
         "info" => LevelFilter::Info,
@@ -230,6 +235,7 @@ fn _main(cli_args: Vec<String>) {
     duplicates: duplicates,
     use_umi: use_umi,
     bam_tag: bam_tag.to_string(),
+    valid_chars: String::from(valid_chars).into_bytes().iter().cloned().collect(),
     };
 
     let pool = rayon::ThreadPoolBuilder::new().num_threads(threads).build().unwrap();
@@ -251,6 +257,8 @@ fn _main(cli_args: Vec<String>) {
         num_not_cell_bc: 0,
         num_not_useful: 0,
         num_non_umi: 0,
+        num_invalid_recs: 0,
+        num_multiallelic_recs: 0,
     };
 
     fn add_metrics(metrics: &mut Metrics, m: &Metrics) {
@@ -261,6 +269,8 @@ fn _main(cli_args: Vec<String>) {
         metrics.num_not_cell_bc += m.num_not_cell_bc;
         metrics.num_not_useful += m.num_not_useful;
         metrics.num_non_umi += m.num_non_umi;
+        metrics.num_invalid_recs += m.num_invalid_recs;
+        metrics.num_multiallelic_recs += m.num_multiallelic_recs;
     }
 
     for v in results.iter() {
@@ -300,6 +310,8 @@ fn _main(cli_args: Vec<String>) {
     info!("Number of alignments skipped due to not being associated with a cell barcode: {}", metrics.num_not_cell_bc);
     info!("Number of alignments skipped due to not being useful: {}", metrics.num_not_useful);
     info!("Number of alignments skipped due to not having a UMI: {}", metrics.num_non_umi);
+    info!("Number of VCF records skipped due to having invalid characters in the alternative haplotype: {}",metrics.num_invalid_recs);
+    info!("Number of VCF records skipped due to being multi-allelic: {}", metrics.num_multiallelic_recs);
 
     let _ = write_matrix_market(&out_matrix_path as &str, &matrix).unwrap();
     if args.is_present("ref_matrix") {
@@ -327,6 +339,7 @@ pub struct Arguments {
     duplicates: bool,
     use_umi: bool,
     bam_tag: String,
+    valid_chars: HashSet<u8>,
 }
 
 
@@ -346,10 +359,10 @@ pub struct Locus {
 }
 
 
-pub struct VariantHaps {
+pub struct VariantHaps<'a> {
     locus: Locus,
-    rref: Vec<u8>,
-    alt: Vec<u8>,
+    rref: &'a Vec<u8>,
+    alt: &'a Vec<u8>,
 }
 
 
@@ -361,6 +374,8 @@ pub struct Metrics {
     pub num_not_cell_bc: usize,
     pub num_not_useful: usize,
     pub num_non_umi: usize,
+    pub num_invalid_recs: usize,
+    pub num_multiallelic_recs: usize,
 }
 
 
@@ -451,6 +466,7 @@ pub fn validate_inputs(recs: &std::vec::Vec<RecHolder<'_>>, bam_file: &str, fast
         bam_seqs.insert(String::from_utf8(bam_seq.to_vec()).unwrap());
     }
 
+    let mut fa = fasta::IndexedReader::from_file(&fasta_file).unwrap();
     for rh in recs {
         let chr = String::from_utf8(rh.rec.header().rid2name(rh.rec.rid().unwrap()).to_vec()).unwrap();
         if !fa_seqs.contains(&chr) {
@@ -459,6 +475,13 @@ pub fn validate_inputs(recs: &std::vec::Vec<RecHolder<'_>>, bam_file: &str, fast
         }
         else if !bam_seqs.contains(&chr) {
             error!("Sequence {} not seen in BAM", chr);
+            process::exit(1);
+        }
+        let chrom_len = chrom_len(&chr, &mut fa).unwrap();
+        let alleles = rh.rec.alleles();
+        let end = rh.rec.pos() + alleles[0].len() as u32;
+        if end as u64 > chrom_len {
+            error!("Record {}:{} has end position {}, which is larger than the chromosome length ({}). Does your FASTA match your VCF?", chr, rh.rec.pos(), end, chrom_len);
             process::exit(1);
         }
     }
@@ -484,7 +507,7 @@ pub fn evaluate_rec<'a>(rh: &RecHolder,
     let chr = String::from_utf8(rh.rec.header().rid2name(rh.rec.rid().unwrap()).to_vec())?;
 
     let alleles = rh.rec.alleles();
-
+ 
     let locus = Locus { chrom: chr.to_string(), 
                         start: rh.rec.pos(), 
                         end: rh.rec.pos() + alleles[0].len() as u32 };
@@ -494,12 +517,48 @@ pub fn evaluate_rec<'a>(rh: &RecHolder,
 
     let haps = VariantHaps {
         locus: Locus { chrom: chr, start: locus.start, end: locus.end },
-        rref,
-        alt
+        rref: &rref,
+        alt: &alt,
     };
 
-    let scores = evaluate_alns(&mut rdr.reader, &haps, &rh.cell_barcodes, args)?;
-    Ok((rh.i, scores))
+    // used for logging
+    let locus_str = format!("{}:{}", locus.chrom, rh.rec.pos());
+
+    let metrics = Metrics {
+        num_reads: 0,
+        num_low_mapq: 0,
+        num_non_primary: 0,
+        num_duplicates: 0,
+        num_not_cell_bc: 0,
+        num_not_useful: 0,
+        num_non_umi: 0,
+        num_invalid_recs: 0,
+        num_multiallelic_recs: 0,
+    };
+
+    let mut r = EvaluateAlnResults {
+        metrics: metrics,
+        scores: Vec::new(),
+    };
+
+    // if this is multi-allelic, ignore it
+    if alleles.len() > 2 {
+        info!("Variant at {} is multi-allelic. It will be ignored.", locus_str);
+        r.metrics.num_multiallelic_recs += 1;
+        return Ok((rh.i, r));
+    }
+
+    // make sure our alt is sane; if it is not, bail before alignment and warn the user
+    for c in alt.iter() {
+        if !args.valid_chars.contains(c) {
+            warn!("Variant at {} has invalid alternative characters. This record will be ignored.", locus_str);
+            r.metrics.num_invalid_recs += 1;
+            return Ok((rh.i, r));
+        }
+    }
+
+    evaluate_alns(&mut rdr.reader, &haps, &rh.cell_barcodes, args, &mut r, &locus_str)?;
+    Ok((rh.i, r))
 }
 
 
@@ -513,7 +572,12 @@ pub fn load_barcodes(filename: impl AsRef<Path>) -> Result<HashMap<Vec<u8>, u32>
         let seq = l?.into_bytes();
         bc_set.insert(seq, i as u32);
     }
-    debug!("Loaded barcodes");
+    let num_bcs = bc_set.len();
+    if num_bcs == 0 {
+        error!("Loaded 0 barcodes. Is your barcode file gzipped or empty?");
+        process::exit(1);
+    }
+    debug!("Loaded {} barcodes", num_bcs);
     Ok(bc_set)
 }
 
@@ -550,7 +614,7 @@ pub fn chrom_len(chrom: &str, fa: &mut fasta::IndexedReader<File>) -> Result<u64
 }
 
 
-pub fn useful_rec(haps: &VariantHaps, rec: &bam::Record) -> Result<bool, Error> {
+pub fn useful_alignment(haps: &VariantHaps, rec: &bam::Record) -> Result<bool, Error> {
     // filter alignments to ensure that they truly overlap the region of interest
     // for now, overlap will be defined as having an aligned base anywhere in the locus
         let cigar = rec.cigar();
@@ -568,34 +632,18 @@ pub fn useful_rec(haps: &VariantHaps, rec: &bam::Record) -> Result<bool, Error> 
 pub fn evaluate_alns(bam: &mut bam::IndexedReader, 
                     haps: &VariantHaps, 
                     cell_barcodes: &HashMap<Vec<u8>, u32>,
-                    args: &Arguments)
-                        -> Result<EvaluateAlnResults, Error> {
+                    args: &Arguments,
+                    r: &mut EvaluateAlnResults,
+                    locus_str: &String)
+                        -> Result<(), Error> {
     // loop over all alignments in the region of interest
     // if the alignments are useful (aligned over this region)
-    // perform smith-waterman against both haplotypes
+    // perform Smith-Waterman against both haplotypes
     // and report the scores
-
-    let metrics = Metrics {
-        num_reads: 0,
-        num_low_mapq: 0,
-        num_non_primary: 0,
-        num_duplicates: 0,
-        num_not_cell_bc: 0,
-        num_not_useful: 0,
-        num_non_umi: 0,
-    };
-
-    let mut r = EvaluateAlnResults {
-        metrics: metrics,
-        scores: Vec::new(),
-    };
 
     let tid = bam.header().tid(haps.locus.chrom.as_bytes()).unwrap();
 
     bam.fetch(tid, haps.locus.start, haps.locus.end)?;
-
-    // used for logging
-    let locus_str = format!("{}:{}-{}", haps.locus.chrom, haps.locus.start, haps.locus.end);
 
     debug!("Evaluating record {}", locus_str);
     for _rec in bam.records() {
@@ -620,7 +668,7 @@ pub fn evaluate_alns(bam: &mut bam::IndexedReader,
                 r.metrics.num_duplicates += 1;
             continue
         }
-        else if useful_rec(haps, &rec).unwrap() == false {
+        else if useful_alignment(haps, &rec).unwrap() == false {
             debug!("{} skipping read {} due to not being useful", 
                    locus_str, String::from_utf8(rec.qname().to_vec()).unwrap());
             r.metrics.num_not_useful += 1;
@@ -670,7 +718,7 @@ pub fn evaluate_alns(bam: &mut bam::IndexedReader,
         r.scores.push(s);
     }
     r.scores.sort_by_key(|s| s.cell_index);
-    Ok(r)
+    Ok(())
 }
 
 
