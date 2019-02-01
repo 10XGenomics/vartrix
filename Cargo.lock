@@ -1054,7 +1054,7 @@ dependencies = [
 
 [[package]]
 name = "vartrix"
-version = "1.1.0"
+version = "1.1.2"
 dependencies = [
  "bio 0.21.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "clap 2.32.0 (registry+https://github.com/rust-lang/crates.io-index)",
