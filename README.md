@@ -3,6 +3,9 @@
 VarTrix is a software tool for extracting single cell variant information from 10x Genomics single cell data. VarTrix will take a set of previously defined variant calls and use that to identify those variants in the single cell data. VarTrix does not perform variant calling. VarTrix is useful for evaluating heterogeneity within a sample, which means that the types of variants that will be useful are either *somatic* or *contained within a copy number variant (CNV) event*. 
  
 ## Overview of how it works
+
+![overview](https://github.com/10xgenomics/vartrix/blob/master/VarTrix_WorkFlow.png)
+
 VarTrix uses Smith-Waterman alignment to evaluate reads that map to each known input variant locus and assign single cells to these variants. This process works on both 10x single cell gene expression datasets as well as 10x single cell DNA datasets.
 
 VarTrix works with any properly formatted sequence resolved VCF. VarTrix works with SNVs, insertions and deletions. 
@@ -83,7 +86,9 @@ From the directory containing the `vartrix` binary, run VarTrix as:
 
 `--ref-matrix`: If `--scoring-method` is set to `coverage`, this must also be set. This is the path that the reference coverage matrix will be written to.
 
-`--threads`: The number of parallel threads to use.
+`--umi`: Boolean flag -- consider UMIs when calculating coverage? In this mode, the BAM must have a `UB` tag reporting the UMI for a given alignment. A consensus of the most common base for a given UMI will be used. This will mostly effect the `coverage` and `alt_frac` modes. DEFAULT: false.
+
+`--threads`: The number of parallel threads to use. DEFAULT: 1.
 
 `--log-level`: One of `info`, `error` or `debug`. Increasing levels of logging. `Debug` mode is extremely verbose and will report on the fate of every single read. DEFAULT: `error`.
 
@@ -93,6 +98,10 @@ From the directory containing the `vartrix` binary, run VarTrix as:
 
 `--no-duplicates`: Boolean flag -- ignore alignments marked as duplicates? Take care when turning this on with scRNA-seq data, as duplicates are marked in that pipeline for every extra read sharing the same UMI/CB pair, which will result in most variant data being lost. Default: `false`.
 
+## Scoring method
+In all output modes, each alignment is evaluated by looking at which haplotype provides the higher alignment score. Each alignment is then assigned a value of `{-1, 1, 2}` for being ambiguous, reference supporting and alternate supporting respectively. If the `--umi` flag is set, then a consensus is taken across each UMI for a given cell. Each UMI must exceed a hardcoded 90% threshold for supporting the same allele or that UMI is set to `-1`. Only positive values will be considered when populating the final output table.
+
+In `--umi` mode, the coverage table reports the number of unambiguous UMIs that support reference or alternate allele per cell. 
 
 ## Log level considerations
 The `--log-level` option sets the amount of information recorded in the output log. 
@@ -131,7 +140,7 @@ Where `my.vcf` is the VCF that you used as input to VarTrix.
 snv_matrix <- readMM("matrix.mtx")
 
 # convert the matrix to a dataframe
-snv_matrix <- as.data.frame(as.matrix(snv_matrix))
+snv_matrix <- as.data.frame(as.matrix(t(snv_matrix)))
 
 #read in the cell barcodes output by Cell Ranger
 barcodes <- read.table("filtered_matrix_mex/barcodes.tsv", header = F)
