@@ -52,7 +52,7 @@ const GAP_EXTEND: i32 = -1;  // Gap extend score
 fn get_args() -> clap::App<'static, 'static> {
     let args = App::new("vartrix")
         .set_term_width(if let Some((Width(w), _)) = terminal_size() { w as usize } else { 120 })
-        .version("0.1")
+        .version("1.1.3")
         .author("Ian Fiddes <ian.fiddes@10xgenomics.com> and Patrick Marks <patrick@10xgenomics.com>")
         .about("Variant assignment for single cell genomics")
         .arg(Arg::with_name("vcf")
@@ -405,15 +405,24 @@ pub fn check_inputs_exist(fasta_file: &str, vcf_file: &str, bam_file: &str, cell
     }
 
     // check if output directories exist
-    for path in &[out_matrix_path, out_ref_matrix_path] {
-        let _dir = Path::new(path).parent();
-        if _dir.is_none() {
-            error!("Unable to parse directory from {}", path);
+    for p in &[out_matrix_path, out_ref_matrix_path] {
+        let path = Path::new(p);
+        if path.exists() {
+            error!("Output path already exists");
             process::exit(1);
         }
-        let dir = _dir.unwrap();
-        if (dir.to_str().unwrap().len() > 0) & !dir.exists() {
-            error!("Output directory {:?} does not exist", dir);
+        if path.is_dir() {
+            error!("Output path is a directory");
+            process::exit(1);
+        }
+        let _parent_dir = path.parent();
+        if _parent_dir.is_none() {
+            error!("Unable to parse directory from {}", p);
+            process::exit(1);
+        }
+        let parent_dir = _parent_dir.unwrap();
+        if (parent_dir.to_str().unwrap().len() > 0) & !parent_dir.exists() {
+            error!("Output directory {:?} does not exist", parent_dir);
             process::exit(1);
         }
     }
