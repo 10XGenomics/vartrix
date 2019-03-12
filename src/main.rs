@@ -411,10 +411,6 @@ pub fn check_inputs_exist(fasta_file: &str, vcf_file: &str, bam_file: &str, cell
             error!("Output path already exists");
             process::exit(1);
         }
-        if path.is_dir() {
-            error!("Output path is a directory");
-            process::exit(1);
-        }
         let _parent_dir = path.parent();
         if _parent_dir.is_none() {
             error!("Unable to parse directory from {}", p);
