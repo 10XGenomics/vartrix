@@ -20,4 +20,5 @@ tempfile = "*"
 itertools = "*"
 
 [profile.release]
-debug = true
+debug = 1
+lto = true
