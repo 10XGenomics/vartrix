@@ -144,7 +144,7 @@ fn get_args() -> clap::App<'static, 'static> {
 
 
 fn main() {
-    setup_panic!();  // pretty panics for users
+    //setup_panic!();  // pretty panics for users
     let mut cli_args = Vec::new();
     for arg in std::env::args_os() {
         cli_args.push(arg.into_string().unwrap());
@@ -524,15 +524,6 @@ pub fn evaluate_rec<'a>(rh: &RecHolder,
                         start: rh.rec.pos(), 
                         end: rh.rec.pos() + alleles[0].len() as u32 };
 
-    let mut fa = fasta::IndexedReader::from_file(&rh.fasta_file)?;
-    let (rref, alt) = construct_haplotypes(&mut fa, &locus, alleles[1], rh.padding);
-
-    let haps = VariantHaps {
-        locus: Locus { chrom: chr, start: locus.start, end: locus.end },
-        rref: &rref,
-        alt: &alt,
-    };
-
     // used for logging
     let locus_str = format!("{}:{}", locus.chrom, rh.rec.pos());
 
@@ -559,6 +550,21 @@ pub fn evaluate_rec<'a>(rh: &RecHolder,
         r.metrics.num_multiallelic_recs += 1;
         return Ok((rh.i, r));
     }
+    // sometimes deletions are represented with an empty ALT column
+    // the VCF library returns a alleles with len 1 here
+    let alt = match alleles.len() {
+        1 => Vec::new(),
+        _ => alleles[1].to_owned()
+    };
+
+    let mut fa = fasta::IndexedReader::from_file(&rh.fasta_file)?;
+    let (rref, alt) = construct_haplotypes(&mut fa, &locus, &alt, rh.padding);
+
+    let haps = VariantHaps {
+        locus: Locus { chrom: chr, start: locus.start, end: locus.end },
+        rref: &rref,
+        alt: &alt,
+    };
 
     // make sure our alt is sane; if it is not, bail before alignment and warn the user
     for c in alt.iter() {
@@ -768,7 +774,7 @@ pub fn construct_haplotypes(fa: &mut fasta::IndexedReader<File>,
             let (bytes, _) = read_locus(fa, &fetch_locus, 0, 0);
             bytes
         };
-
+        
         let mut alt_hap = Vec::new();
         alt_hap.extend(get_range(locus.start.saturating_sub(padding), locus.start));
         alt_hap.extend(alt);
