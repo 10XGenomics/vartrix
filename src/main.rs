@@ -144,7 +144,7 @@ fn get_args() -> clap::App<'static, 'static> {
 
 
 fn main() {
-    //setup_panic!();  // pretty panics for users
+    setup_panic!();  // pretty panics for users
     let mut cli_args = Vec::new();
     for arg in std::env::args_os() {
         cli_args.push(arg.into_string().unwrap());
