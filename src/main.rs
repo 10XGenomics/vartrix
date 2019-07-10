@@ -18,12 +18,11 @@ extern crate debruijn_mapping;
 
 use simplelog::*;
 use itertools::Itertools;
-use std::cmp::{max, min};
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap};
 use std::process;
 use clap::{Arg, App};
 use std::fs::File;
-use std::io::prelude::*;
+//use std::io::prelude::*;
 use bio::io::fasta;
 use bio::alignment::pairwise::Aligner;
 use rust_htslib::bam::{self, Read, Record};
@@ -33,93 +32,103 @@ use std::path::Path;
 use std::io::{BufRead, BufReader};
 use sprs::io::write_matrix_market;
 use sprs::TriMat;
-use rust_htslib::bcf::{self, Read as BcfRead};
-use rayon::prelude::*;
+//use rayon::prelude::*;
 use terminal_size::{Width, terminal_size};
 use debruijn_mapping::hla::Allele;
 use debruijn_mapping::hla::AlleleParser;
 use debruijn_mapping::locus::Locus;
 use std::str::FromStr;
 
-const REF_VALUE: i8 = 1;
-const ALT_VALUE: i8 = 2;
-const REF_ALT_VALUE: i8 = 3;
 const MIN_SCORE: i32 = 25;
-const UNKNOWN_VALUE: i8 = -1;
 const GENE_CONSENSUS_THRESHOLD: f64 = 0.5;
 const ALLELE_CONSENSUS_THRESHOLD: f64 = 0.1;
-const K: usize = 6;  // kmer match length
-const W: usize = 20;  // Window size for creating the band
+//const K: usize = 6;  // kmer match length
+//const W: usize = 20;  // Window size for creating the band
 const MATCH: i32 = 1;  // Match score
 const MISMATCH: i32 = -5; // Mismatch score
 const GAP_OPEN: i32 = -5; // Gap open score
 const GAP_EXTEND: i32 = -1;  // Gap extend score
 
 fn get_args() -> clap::App<'static, 'static> {
-    let args = App::new("vartrixHLA")
-        .set_term_width(if let Some((Width(w), _)) = terminal_size() { w as usize } else { 120 })
-        .version("DEV")
-        .author("Charlotte Darby <cdarby@jhu.edu> and Ian Fiddes <ian.fiddes@10xgenomics.com> and Patrick Marks <patrick@10xgenomics.com>")
-        .about("HLA genotyping and allele-specific expression for single-cell RNA sequencing")
-        .arg(Arg::with_name("bam")
-             .short("b")
-             .long("bam")
-             .value_name("FILE")
-             .help("Cellranger BAM file")
-             .required(true))
-        .arg(Arg::with_name("cell_barcodes")
-             .short("c")
-             .long("cell-barcodes")
-             .value_name("FILE")
-             .help("File with cell barcodes to be evaluated")
-             .required(true))
-        .arg(Arg::with_name("out_matrix")
-             .short("o")
-             .long("out-matrix")
-             .value_name("OUTPUT_FILE")
-             .default_value("out_matrix.mtx")
-             .help("Output Matrix Market file (.mtx)"))
-        .arg(Arg::with_name("out_columns")
-             .long("out-columns")
-             .value_name("OUTPUT_COLUMNS")
-             .default_value("columns.tsv")
-             .help("Column names for the .mtx file"))
-        .arg(Arg::with_name("fastagenomic")
-             .short("g")
-             .long("fasta-genomic")
-             .value_name("FILE")
-             .help("Multi-FASTA file with genomic sequence of each allele")
-             .required(true)) //Eventually, can provide FASTA or the genotypes only or neither
-        .arg(Arg::with_name("fastacds")
-             .short("f")
-             .long("fasta-cds")
-             .value_name("FILE")
-             .help("Multi-FASTA file with CDS sequence of each allele")
-             .required(true)) //Eventually, can provide FASTA or the genotypes only or neither
-        .arg(Arg::with_name("region")
-             .short("r")
-             .long("region")
-             .value_name("STRING")
-             .help("Samtools-format region string of reads to use")
-             .default_value("6:28510120-33480577"))
-        .arg(Arg::with_name("log_level")
-             .long("log-level")
-             .possible_values(&["info", "debug", "error"])
-             .default_value("error")
-             .help("Logging level"))
-        .arg(Arg::with_name("threads")
-             .long("threads")
-             .value_name("INTEGER")
-             .default_value("1")
-             .help("Number of parallel threads to use"))
-        .arg(Arg::with_name("primary_alignments")
-             .long("primary-alignments")
-             .help("Use primary alignments only"))
-        .arg(Arg::with_name("cell_tag")
-             .long("cell-tag")
-             .default_value("CB")
-             .help("BAM tag to consider for marking cells?"));
-        args
+    App::new("vartrixHLA")
+    .set_term_width(if let Some((Width(w), _)) = terminal_size() { w as usize } else { 120 })
+    .version("DEV")
+    .author("Charlotte Darby <cdarby@jhu.edu> and Ian Fiddes <ian.fiddes@10xgenomics.com> and Patrick Marks <patrick@10xgenomics.com>")
+    .about("HLA genotyping and allele-specific expression for single-cell RNA sequencing")
+    // Required parameters
+    .arg(Arg::with_name("bam")
+         .short("b")
+         .long("bam")
+         .value_name("FILE")
+         .help("Cellranger BAM file")
+         .required(true))
+    .arg(Arg::with_name("cell_barcodes")
+         .short("c")
+         .long("cell-barcodes")
+         .value_name("FILE")
+         .help("File with cell barcodes to be evaluated")
+         .required(true))
+    // Output parameters (optional)
+    .arg(Arg::with_name("out_matrix")
+         .short("o")
+         .long("out-matrix")
+         .value_name("OUTPUT_FILE")
+         .default_value("out_matrix.mtx")
+         .help("Output Matrix Market file (.mtx)"))
+    .arg(Arg::with_name("out_columns")
+         .long("out-columns")
+         .value_name("OUTPUT_COLUMNS")
+         .default_value("columns.tsv")
+         .help("Column names for the .mtx file"))
+    // Input parameters (optional)
+    .arg(Arg::with_name("fastagenomic")
+         .short("g")
+         .long("fasta-genomic")
+         .value_name("FILE")
+         .help("Multi-FASTA file with genomic sequence of each allele")
+         .default_value(""))
+    .arg(Arg::with_name("fastacds")
+         .short("f")
+         .long("fasta-cds")
+         .value_name("FILE")
+         .help("Multi-FASTA file with CDS sequence of each allele")
+         .default_value(""))
+     .arg(Arg::with_name("hladbdir")
+         .short("d")
+         .long("hladb-dir")
+         .value_name("PATH")
+         .help("Directory of the IMGT-HLA database")
+         .default_value(""))
+     .arg(Arg::with_name("hlaindex")
+         .short("i")
+         .long("hla-index")
+         .value_name("FILE")
+         .help("IMGT-HLA pseudoalignment index file")
+         .default_value(""))
+    // Configuration parameters (optional)
+    .arg(Arg::with_name("region")
+         .short("r")
+         .long("region")
+         .value_name("STRING")
+         .help("Samtools-format region string of reads to use")
+         .default_value("6:28510120-33480577"))
+    .arg(Arg::with_name("log_level")
+         .long("log-level")
+         .possible_values(&["info", "debug", "error"])
+         .default_value("error")
+         .help("Logging level"))
+    .arg(Arg::with_name("threads")
+         .long("threads")
+         .value_name("INTEGER")
+         .default_value("1")
+         .help("Number of parallel threads to use"))
+    .arg(Arg::with_name("primary_alignments")
+         .long("primary-alignments")
+         .help("Use primary alignments only"))
+    .arg(Arg::with_name("cell_tag")
+         .long("cell-tag")
+         .default_value("CB")
+         .help("BAM tag to consider for marking cells?"))
 }
 
 
@@ -133,10 +142,15 @@ fn main() {
 }
 
 // constructing a _main allows for us to run regression tests way more easily
-fn _main<'a>(cli_args: Vec<String>) {
+#[allow(clippy::cognitive_complexity)] 
+fn _main(cli_args: Vec<String>) {
     let args = get_args().get_matches_from(cli_args);
-    let fasta_file_gen = args.value_of("fastagenomic").expect("You must supply a genomic sequence fasta file");
-    let fasta_file_cds = args.value_of("fastacds").expect("You must supply a CDS fasta file");
+    //let fasta_file_gen = args.value_of("fastagenomic").expect("You must supply a genomic sequence fasta file");
+    //let fasta_file_cds = args.value_of("fastacds").expect("You must supply a CDS fasta file");
+    let fasta_file_gen = args.value_of("fastagenomic").unwrap_or_default();
+    let fasta_file_cds = args.value_of("fastacds").unwrap_or_default();
+    let hla_db_dir = args.value_of("hladbdir").unwrap_or_default();
+    let hla_index = args.value_of("hlaindex").unwrap_or_default();
     let bam_file = args.value_of("bam").expect("You must provide a BAM file");
     let cell_barcodes = args.value_of("cell_barcodes").expect("You must provide a cell barcodes file");
     let region = args.value_of("region").unwrap_or_default();
@@ -147,7 +161,7 @@ fn _main<'a>(cli_args: Vec<String>) {
                                           .expect("Failed to convert threads to integer");
     let primary_only = args.is_present("primary_alignments");
     let ll = args.value_of("log_level").unwrap();
-    let bam_tag = args.value_of("bam_tag").unwrap_or_default();
+    let bam_tag = args.value_of("cell_tag").unwrap_or_default();
 
     let ll = match ll {
         "info" => LevelFilter::Info,
@@ -164,8 +178,39 @@ fn _main<'a>(cli_args: Vec<String>) {
     };
     
     check_inputs_exist(bam_file, cell_barcodes, out_matrix_path, out_columns_path);
-    check_inputs_exist_fasta(fasta_file_cds, fasta_file_gen);
     
+    let (mut genomic, mut cds) : (&str, &str) = (fasta_file_cds, fasta_file_gen);
+    // If the CDS or genomic FASTA files were not provided, generate them
+    if fasta_file_gen.is_empty() || fasta_file_cds.is_empty() {
+        if hla_db_dir.is_empty() {
+            error!("Must provide either -d (database directory) or both -g and -f (FASTA sequences).");
+            process::exit(1);
+        }
+        check_inputs_exist_hla_db(hla_db_dir);
+        let (hla_counts, hla_index1) : (String, String) =
+        // If the index for the genotyping algorithm was not provided, generate it
+        if hla_index.is_empty() {
+            let db_fasta = [hla_db_dir, "hla_nuc.fasta"].join("/");
+            let allele_status = [hla_db_dir, "Allele_status.txt"].join("/");
+            let hla_index_generated = debruijn_mapping::build_index::hla_index(db_fasta,"hla_nuc.fasta.idx".to_string(),allele_status).expect("Pseudoaligner index building failed");
+            (debruijn_mapping::bam::hla_map_bam(hla_index_generated.clone(), "pseudoaligner".to_string(), bam_file.to_string(), Some(region.to_string())).expect("Pseudoalignment mapping failed"), hla_index_generated)
+        } else {
+            check_inputs_exist_hla_idx(hla_index);
+            (debruijn_mapping::bam::hla_map_bam(hla_index.to_string(), "pseudoaligner".to_string(), bam_file.to_string(), Some(region.to_string())).expect("Pseudoalignment mapping failed"), hla_index.to_string())
+        };
+        // TODO deal with ntermediate files
+        let hla_counts = [hla_counts, "counts".to_string(), "bin".to_string()].join(".");
+        let cdsdb = [hla_db_dir, "hla_nuc.fasta"].join("/");
+        let gendb = [hla_db_dir, "hla_gen.fasta"].join("/");
+        if let Ok(i) = debruijn_mapping::em::hla_em(hla_index1, hla_counts, cdsdb, gendb) {
+            genomic = i.0;
+            cds = i.1;
+        } else {
+            error!("EM/Consensus failed");
+            process::exit(1);
+        }
+    }
+    check_inputs_exist_fasta(cds, genomic);
     let region : Locus = Locus::from_str(region).expect("Failed to parse region string");
     
     // if fasta file of genomic/CDS sequences is provided, read in and validiate its contents 
@@ -174,10 +219,10 @@ fn _main<'a>(cli_args: Vec<String>) {
     let allele_parser = AlleleParser::new();
 
     let mut genes : Vec<Gene> = Vec::new();
-    let fa : fasta::Reader<File> = fasta::Reader::from_file(&fasta_file_gen).unwrap();
+    let fa : fasta::Reader<File> = fasta::Reader::from_file(&genomic).unwrap();
     let mut num_alleles : usize = 0;
     let mut num_genes : usize = 0;
-    
+    println!("Reading genomic FASTA file {}", genomic);
     'outer: for record in fa.records() {
         let record = record.unwrap();
         let allele_str : &str = record.desc().expect("No FASTA description");
@@ -213,9 +258,9 @@ fn _main<'a>(cli_args: Vec<String>) {
         num_genes += 1;
         genes.push(g_new);
     }
-
+    println!("Reading CDS FASTA file {}", cds);
     let mut num_cds : usize = 0;
-    let fa : fasta::Reader<File> = fasta::Reader::from_file(&fasta_file_cds).unwrap();
+    let fa : fasta::Reader<File> = fasta::Reader::from_file(&cds).unwrap();
     'outer: for record in fa.records() {
         let record = record.unwrap();
         let allele_str : &str = record.desc().expect("No FASTA description");
@@ -251,11 +296,11 @@ fn _main<'a>(cli_args: Vec<String>) {
     
     let mut matrix : TriMat<usize> = TriMat::new((num_alleles+num_genes, cell_barcodes.len()));
     
-    
     let mut reader = bam::IndexedReader::from_path(&bam_file).unwrap();
 
-    // TODO how to split the alignment task up into chunks?
-    let mut metrics = Metrics {
+    // TODO how to split the alignment task up into chunks?    
+    let mut r : EvaluateAlnResults = EvaluateAlnResults {
+        metrics: Metrics {
         num_reads: 0,
         num_non_primary: 0,
         num_not_cell_bc: 0,
@@ -263,13 +308,11 @@ fn _main<'a>(cli_args: Vec<String>) {
         num_not_aligned: 0,
         num_cds_align: 0,
         num_gen_align: 0,
-    };
-    
-    let mut r : EvaluateAlnResults = EvaluateAlnResults {
-        metrics,
+    },
         scores: Vec::new(),
     };
     
+    // Mapping of genes/alleles to column numbers in the matrix
     let mut genes_to_colnums : HashMap<Vec<u8>,usize> = HashMap::new();
     let mut ncols : usize = 0;
     for g in &genes {
@@ -287,14 +330,33 @@ fn _main<'a>(cli_args: Vec<String>) {
                         &mut r,
                         &region,
                         );
+    let metrics = r.metrics;
     debug!("Finished aligning reads for all variants");
     
-    let matrix_entries : Vec<MatrixEntry> = count_molecules(&genes,
+    info!("Number of alignments evaluated: {}", metrics.num_reads);
+    if primary_only {
+        info!("Number of alignments skipped due to not being primary: {}", metrics.num_non_primary);
+    } else {
+        info!("Number of alignments that were not primary: {}", metrics.num_non_primary);
+    }
+    info!("Number of alignments skipped due to not being associated with a cell barcode: {}", metrics.num_not_cell_bc);
+    info!("Number of alignments skipped due to not having a UMI: {}", metrics.num_non_umi);
+    info!("Number of reads with no alignment score > {}: {}", MIN_SCORE, metrics.num_non_umi);
+    info!("Number of alignments to CDS sequence: {}", metrics.num_cds_align);
+    info!("Number of alignments to genomic sequence: {}", metrics.num_gen_align);
+    
+    let matrix_entries : Vec<MatrixEntry> = count_molecules(
                         &r.scores,
                         &genes_to_colnums,
                         ncols,
                         );
     debug!("Finished scoring alignments for all variants");
+    
+    for e in matrix_entries {
+        matrix.add_triplet(e.row as usize, e.column, e.value);
+    }
+    write_matrix_market(&out_matrix_path as &str, &matrix).unwrap();
+    debug!("Wrote reference matrix file");
 /*
     let pool = rayon::ThreadPoolBuilder::new().num_threads(threads).build().unwrap();
     debug!("Initialized a thread pool with {} threads", threads);
@@ -306,32 +368,6 @@ fn _main<'a>(cli_args: Vec<String>) {
 
     debug!("Finished aligning reads for all variants");
 */
-    
-    
-    /*info!("Number of alignments evaluated: {}", metrics.num_reads);
-    info!("Number of alignments skipped due to not being primary: {}", metrics.num_non_primary);
-    info!("Number of alignments skipped due to not being associated with a cell barcode: {}", metrics.num_not_cell_bc);
-    info!("Number of alignments skipped due to not having a UMI: {}", metrics.num_non_umi);
-*/
-/*
-    let _ = write_matrix_market(&out_matrix_path as &str, &matrix).unwrap();
-    if scoring_method == "coverage" {
-        let _ = write_matrix_market(&ref_matrix_path as &str, &ref_matrix).unwrap();
-        debug!("Wrote reference matrix file");
-    }
-
-    if args.is_present("out_variants") {
-        let out_variants = args.value_of("out_variants").expect("Out variants path flag set but no value");
-        validate_output_path(&out_variants);
-        write_variants(out_variants, vcf_file);
-        debug!("Wrote matrix file");
-    }
-
-    // warn the user if they may have made a mistake
-    let sum = matrix.data().iter().fold(0.0, |a, &b| a + b);
-    if sum == 0.0 {
-        error!("The resulting matrix has a sum of 0. Did you use the --umi flag on data without UMIs?")
-    }*/
 }
 
 /* Structs */
@@ -358,6 +394,7 @@ pub struct Arguments {
     bam_tag: String,
 }
 
+#[derive(Clone,Copy)]
 pub struct Metrics {
     pub num_reads: usize,
     pub num_non_primary: usize,
@@ -368,6 +405,7 @@ pub struct Metrics {
     pub num_not_aligned: usize,
 }
 
+#[derive(Debug)]
 pub struct Scores {
     pub cell_index: u32,
     pub umi: Vec<u8>,
@@ -382,23 +420,10 @@ pub struct EvaluateAlnResults {
 }
 
 pub struct MatrixEntry {
-    row: u32,
+    row: usize,
     column: usize,
     value: usize,
 }
-
-/*
-pub struct CellCalls {
-    cell_index: u32,
-    calls: Vec<i8>,
-}*/
-
-/*
-pub struct CellCounts {
-    pub ref_count: usize,
-    pub alt_count: usize,
-    pub unk_count: usize,
-}*/
 
 /*
 pub struct RecHolder<'a> {
@@ -408,9 +433,8 @@ pub struct RecHolder<'a> {
     padding: u32,
     cell_barcodes: &'a HashMap<Vec<u8>, u32>,
 }
-*/
 
-/*pub struct ReaderWrapper {
+pub struct ReaderWrapper {
   filename: String,
   reader: bam::IndexedReader
 }
@@ -424,7 +448,7 @@ impl Clone for ReaderWrapper {
     }
 }*/
 
-/* Helper Functions */
+/* Validate Input/Output Files/Paths */
 
 pub fn validate_output_path(p: &str) {
     let path = Path::new(p);
@@ -438,7 +462,7 @@ pub fn validate_output_path(p: &str) {
             process::exit(1);
         }
         let parent_dir = _parent_dir.unwrap();
-        if (parent_dir.to_str().unwrap().len() > 0) & !parent_dir.exists() {
+        if !parent_dir.to_str().unwrap().is_empty() & !parent_dir.exists() {
             error!("Output directory {:?} does not exist", parent_dir);
             process::exit(1);
         }
@@ -480,6 +504,20 @@ pub fn check_inputs_exist(bam_file: &str, cell_barcodes: &str,
     }
 }
 
+pub fn check_inputs_exist_hla_db(path: &str) {
+    if !Path::new(&path).exists() {
+        error!("IMGT-HLA database directory {} does not exist", path);
+        process::exit(1);
+    }
+    for file in [ "hla_gen.fasta",  "hla_gen.fasta.fai", "hla_nuc.fasta", "hla_nuc.fasta.fai", "Allele_status.txt" ].iter() { //TODO if need "wmda/hla_nom_g.txt",
+        let file1 = [path,file].join("/");
+        if !Path::new(&file1).exists() {
+            error!("IMGT-HLA database file {} does not exist", file);
+            process::exit(1);
+        }
+    }
+}
+    
 pub fn check_inputs_exist_fasta(fasta_cds: &str, fasta_gen: &str) {
     for path in [fasta_cds, fasta_gen].iter() {
         if !Path::new(&path).exists() {
@@ -488,6 +526,15 @@ pub fn check_inputs_exist_fasta(fasta_cds: &str, fasta_gen: &str) {
         }
     }
 }
+
+pub fn check_inputs_exist_hla_idx(path: &str) {
+    if !Path::new(&path).exists() {
+        error!("Pseudoalignment index {} does not exist. Omit parameter -i to generate automatically.", path);
+        process::exit(1);
+    }
+}
+
+/* Helper Functions */
 
 pub fn load_barcodes(filename: impl AsRef<Path>) -> Result<HashMap<Vec<u8>, u32>, Error> {
     let r = File::open(filename.as_ref())?;
@@ -509,7 +556,7 @@ pub fn load_barcodes(filename: impl AsRef<Path>) -> Result<HashMap<Vec<u8>, u32>
 }
 
 
-pub fn get_cell_barcode(rec: &Record, cell_barcodes: &HashMap<Vec<u8>, u32>, bam_tag: &String) -> Option<u32> {
+pub fn get_cell_barcode(rec: &Record, cell_barcodes: &HashMap<Vec<u8>, u32>, bam_tag: &str) -> Option<u32> {
     match rec.aux(bam_tag.as_bytes()) {
         Some(Aux::String(hp)) => {
             let cb = hp.to_vec();
@@ -563,7 +610,6 @@ pub fn align_to_alleles(bam: &mut bam::IndexedReader,
             continue;
         }
         let cell_index = cell_index.unwrap();
-        
         let _umi = get_umi(&rec);
         if _umi.is_none() {
             debug!("{} skipping read {} due to not having a UMI",
@@ -637,20 +683,19 @@ pub fn align_to_alleles(bam: &mut bam::IndexedReader,
             max_gene : max_allele.unwrap().gene.clone(),
             max_allele : max_num,
         };
-
+        debug!("{:?}",s);
         r.scores.push(s);
     }
     Ok(())
 }
 
 /* Counting Function */
-pub fn count_molecules(genes: &Vec<Gene>,
-                       scores: &Vec<Scores>,
+pub fn count_molecules(scores: &Vec<Scores>,
                        genes_to_colnums: &HashMap<Vec<u8>,usize>,
                        ncols : usize,
 ) -> Vec<MatrixEntry> {
    let mut entries = Vec::new();
-   for (cell_index, cell_scores) in &scores.iter().group_by(|s| s.cell_index) { //TODO has to be sorted?
+   for (cell_index, cell_scores) in &scores.iter().sorted_by_key(|s| s.cell_index).iter().group_by(|s| s.cell_index) {
         let mut matrix_row : Vec<usize> = vec![0; ncols];
         let mut parsed_scores : HashMap<&Vec<u8>,Vec<&Scores>> = HashMap::new();
         for score in cell_scores.into_iter() { 
@@ -692,8 +737,8 @@ pub fn count_molecules(genes: &Vec<Gene>,
         for (c, val) in matrix_row.iter().enumerate() {
             if *val > 0 {
                 let e = MatrixEntry{
-                    row: cell_index,
-                    column: c,
+                    row: c,
+                    column: cell_index as usize,
                     value: *val,
                     }; 
                 entries.push(e); 
@@ -702,273 +747,6 @@ pub fn count_molecules(genes: &Vec<Gene>,
     }
     entries
 }
-
-/*pub fn evaluate_alns(bam: &mut bam::IndexedReader, 
-                    haps: &VariantHaps, 
-                    cell_barcodes: &HashMap<Vec<u8>, u32>,
-                    args: &Arguments,
-                    r: &mut EvaluateAlnResults,
-                    locus_str: &String)
-                        -> Result<(), Error> {
-    // loop over all alignments in the region of interest
-    // if the alignments are useful (aligned over this region)
-    // perform Smith-Waterman against both haplotypes
-    // and report the scores
-
-    let tid = bam.header().tid(haps.locus.chrom.as_bytes()).unwrap();
-
-    bam.fetch(tid, haps.locus.start, haps.locus.end)?;
-
-    debug!("Evaluating record {}", locus_str);
-    for _rec in bam.records() {
-        let rec = _rec?;
-        r.metrics.num_reads += 1;
-
-        if args.primary & (rec.is_secondary() | rec.is_supplementary()) {
-            debug!("{} skipping read {} due to not being the primary alignment", 
-                   locus_str, String::from_utf8(rec.qname().to_vec()).unwrap());
-            r.metrics.num_non_primary += 1;
-            continue;
-        }
-        else if useful_alignment(haps, &rec).unwrap() == false {
-            debug!("{} skipping read {} due to not being useful", 
-                   locus_str, String::from_utf8(rec.qname().to_vec()).unwrap());
-            r.metrics.num_not_useful += 1;
-            continue;
-        }
-
-        let cell_index = get_cell_barcode(&rec, cell_barcodes, &args.bam_tag);
-        if cell_index.is_none() {
-            debug!("{} skipping read {} due to not having a cell barcode",
-                    locus_str, String::from_utf8(rec.qname().to_vec()).unwrap());
-            r.metrics.num_not_cell_bc += 1;
-            continue;
-        }
-        let cell_index = cell_index.unwrap();
-        
-        let _umi = get_umi(&rec);
-        if (args.use_umi == true) & _umi.is_none() {
-            debug!("{} skipping read {} due to not having a UMI",
-                    locus_str, String::from_utf8(rec.qname().to_vec()).unwrap());
-            r.metrics.num_non_umi += 1;
-            continue;
-        }
-        // if no UMIs in this dataset, just plug in dummy UMI
-        let umi = if args.use_umi == false {vec![1 as u8]} else {_umi.unwrap()};
-
-        let seq = &rec.seq().as_bytes();
-
-        let score = |a: u8, b: u8| if a == b {MATCH} else {MISMATCH};
-        let mut aligner = banded::Aligner::new(GAP_OPEN, GAP_EXTEND, score, K, W);
-        let ref_alignment = aligner.local(seq, &haps.rref);
-        let alt_alignment = aligner.local(seq, &haps.alt);
-
-        debug!("{} {} ref_aln:\n{}", locus_str, String::from_utf8(rec.qname().to_vec()).unwrap(),
-                ref_alignment.pretty(seq, &haps.rref));
-        debug!("{} {} alt_aln:\n{}", locus_str, String::from_utf8(rec.qname().to_vec()).unwrap(),
-                alt_alignment.pretty(seq, &haps.alt));
-        debug!("{} {} ref_score: {} alt_score: {}", locus_str, String::from_utf8(rec.qname().to_vec()).unwrap(),
-                ref_alignment.score, alt_alignment.score);
-
-        let s = Scores {
-            cell_index: cell_index,
-            umi: umi,
-            ref_score: ref_alignment.score,
-            alt_score: alt_alignment.score,
-        };
-
-        r.scores.push(s);
-    }
-    r.scores.sort_by_key(|s| s.cell_index);
-    Ok(())
-}*/
-
-/*
-pub fn read_locus(fa: &mut fasta::IndexedReader<File>,
-                  loc: &Locus,
-                  pad_left: u32,
-                  pad_right: u32)
-                  -> (Vec<u8>, usize) {
-    let mut seq = Vec::new();
-
-    let new_start = max(0, loc.start as i32 - pad_left as i32) as u64;
-    let new_end = u64::from(min(loc.end + pad_right, chrom_len(&loc.chrom, fa).unwrap() as u32));
-
-    fa.fetch(&loc.chrom, new_start, new_end).unwrap();
-    fa.read(&mut seq).unwrap();
-    assert!(new_end - new_start <= seq.len() as u64);
-
-    let slc = seq.as_mut_slice();
-    let new_slc = slc.to_ascii_uppercase();
-    (new_slc.into_iter().collect(), new_start as usize)
-}
-
-
-// Get padded ref and alt haplotypes around the variant. Locus must cover the REF bases of the VCF variant.
-pub fn construct_haplotypes(fa: &mut fasta::IndexedReader<File>, 
-                            locus: &Locus, 
-                            alt: &[u8], 
-                            padding: u32) -> (Vec<u8>, Vec<u8>)
-{
-    let chrom_len = chrom_len(&locus.chrom, fa).unwrap();
-
-    let alt_hap = {
-        let mut get_range = |s,e| {
-            let fetch_locus = Locus { chrom: locus.chrom.clone(), start: s, end: e };
-            let (bytes, _) = read_locus(fa, &fetch_locus, 0, 0);
-            bytes
-        };
-        
-        let mut alt_hap = Vec::new();
-        alt_hap.extend(get_range(locus.start.saturating_sub(padding), locus.start));
-        alt_hap.extend(alt);
-        alt_hap.extend(get_range(locus.end, min(locus.end + padding, chrom_len as u32)));
-        alt_hap
-    };
-
-    let (ref_hap, _) = read_locus(fa, locus, padding, padding);
-    debug!("{}:{}-{} -- ref: {} alt: {}", locus.chrom, locus.start, locus.end, 
-                                          String::from_utf8(ref_hap.clone()).unwrap(), 
-                                          String::from_utf8(alt_hap.clone()).unwrap());
-    (ref_hap, alt_hap)
-}*/
-
-/*fn evaluate_scores(ref_score: i32, alt_score: i32) -> Option<i8> {
-    if (ref_score < MIN_SCORE) & (alt_score < MIN_SCORE) {
-        return None
-    }
-    else if ref_score > alt_score {
-        return Some(REF_VALUE);
-    } else if alt_score > ref_score {
-        return Some(ALT_VALUE);
-    }
-    else { // ref_score == alt_score
-        return Some(UNKNOWN_VALUE);
-    }
-}
-
-
-pub fn convert_to_counts(r: Vec<i8>) -> CellCounts {
-    let c = CellCounts {
-        ref_count: r.iter().filter(|&x| *x == REF_VALUE).count(),
-        alt_count: r.iter().filter(|&x| *x == ALT_VALUE).count(),
-        unk_count: r.iter().filter(|&x| *x == UNKNOWN_VALUE).count(),
-    };
-    c
-}
-
-
-fn parse_scores(scores: &Vec<Scores>, umi: bool) -> Vec<CellCalls> {
-    // parse the score vector into collapsed calls
-    let mut r = Vec::new();
-    for (cell_index, cell_scores) in &scores.into_iter().group_by(|s| s.cell_index) {
-        if umi == true {
-            // map of UMI to Score objects; keep track of all Scores for a given CB/UMI pair
-            let mut parsed_scores = HashMap::new();
-            for score in cell_scores.into_iter() {
-                let eval = evaluate_scores(score.ref_score, score.alt_score);
-                if eval.is_none() {
-                    continue;
-                }
-                parsed_scores.entry(&score.umi).or_insert(Vec::new()).push(eval.unwrap());
-            }
-            // collapse each UMI into a consensus value
-            let mut collapsed_scores = Vec::new();
-            for (_umi, v) in parsed_scores.into_iter() {
-                let counts = convert_to_counts(v);
-                debug!("cell_index {} / UMI {} saw counts ref: {} alt: {} unk: {}", &cell_index, String::from_utf8(_umi.clone()).unwrap(), counts.ref_count, counts.alt_count, counts.unk_count);
-                let ref_frac = counts.ref_count as f64 / (counts.alt_count as f64 + counts.ref_count as f64 + counts.unk_count as f64);
-                let alt_frac = counts.alt_count as f64 / (counts.alt_count as f64 + counts.ref_count as f64 + counts.unk_count as f64);
-                if (ref_frac < CONSENSUS_THRESHOLD) & (alt_frac < CONSENSUS_THRESHOLD) { 
-                    collapsed_scores.push(UNKNOWN_VALUE);
-                }
-                else if alt_frac >= CONSENSUS_THRESHOLD {
-                    collapsed_scores.push(ALT_VALUE);
-                }
-                else {
-                    assert!(ref_frac >= CONSENSUS_THRESHOLD);
-                    collapsed_scores.push(REF_VALUE);
-                }
-            }
-            debug!("cell index {} saw calls {:?}", cell_index, collapsed_scores);
-            let counts = CellCalls {cell_index: cell_index, calls: collapsed_scores};
-            r.push(counts);
-        }
-        else {
-            let mut scores = Vec::new();
-            for score in cell_scores.into_iter() {
-                let _eval = evaluate_scores(score.ref_score, score.alt_score);
-                if _eval.is_none() {
-                    continue;
-                }
-                let eval = _eval.unwrap();
-                scores.push(eval);
-            }
-            debug!("cell index {} saw calls {:?}", cell_index, scores);
-            let counts = CellCalls {cell_index: cell_index, calls: scores};
-            // map of CB to Score objects. This is basically trivial in the non-UMI case
-            r.push(counts);
-        }
-    }
-    r
-}*/
-
-
-/*pub fn consensus_scoring(results: &EvaluateAlnResults, i: usize, umi: bool) -> Vec<(u32, f64)> {
-    let parsed_scores = parse_scores(&results.scores, umi);
-    let mut result = Vec::new();
-    for s in parsed_scores.into_iter() {
-        let counts = convert_to_counts(s.calls);
-        if counts.unk_count > 1 {
-            info!("Variant at index {} has multiple unknown reads at barcode index {}. Check this locus manually", i, s.cell_index);
-        }
-        
-        if (counts.ref_count > 0) & (counts.alt_count > 0) {
-            result.push((s.cell_index, REF_ALT_VALUE as f64));
-        }
-        else if counts.alt_count > 0 {
-            result.push((s.cell_index, ALT_VALUE as f64));
-        }
-        else if counts.ref_count > 0 {
-            result.push((s.cell_index, REF_VALUE as f64));
-        }
-    }
-    result
-}*/
-
-
-/*pub fn alt_frac(results: &EvaluateAlnResults, i: usize, umi: bool) -> Vec<(u32, f64)> {
-    let parsed_scores = parse_scores(&results.scores, umi);
-    let mut result = Vec::new();
-    for s in parsed_scores.into_iter() {
-        let counts = convert_to_counts(s.calls);
-        if counts.unk_count > 1 {
-            info!("Variant at index {} has multiple unknown reads at barcode index {}. Check this locus manually", i, s.cell_index);
-        }
-        
-        let alt_frac = counts.alt_count as f64 / (counts.ref_count as f64 + 
-                                                  counts.alt_count as f64 + 
-                                                  counts.unk_count as f64);
-        result.push((s.cell_index, alt_frac));
-    }
-    result
-}
-
-
-pub fn coverage(results: &EvaluateAlnResults, i: usize, umi: bool) -> (Vec<(u32, f64)>, Vec<(u32, f64)>) {
-    let parsed_scores = parse_scores(&results.scores, umi);
-    let mut result = (Vec::new(), Vec::new());
-    for s in parsed_scores.into_iter() {
-        let counts = convert_to_counts(s.calls);
-        if counts.unk_count > 1 {
-            info!("Variant at index {} has multiple unknown reads at barcode index {}. Check this locus manually", i, s.cell_index);
-        }
-        
-        result.0.push((s.cell_index, counts.alt_count as f64));
-        result.1.push((s.cell_index, counts.ref_count as f64));
-    }
-    result
-}*/
 
 /*
 pub fn evaluate_chunk<'a>(chunk: &&[RecHolder<'_>],
@@ -1052,158 +830,50 @@ pub fn evaluate_rec<'a>(rh: &RecHolder,
     Ok((rh.i, r))
 }*/
 
-
-pub fn write_variants(out_variants: &str, vcf_file: &str) {
-    // write the variants to a TSV file for easy loading into Seraut
-    let mut rdr = bcf::Reader::from_path(&vcf_file).unwrap();
-    let mut of = File::create(out_variants).unwrap();
-    for _rec in rdr.records() {
-        let rec = _rec.unwrap();
-        let chr = String::from_utf8(rec.header().rid2name(rec.rid().unwrap()).to_vec()).unwrap();
-        let pos = rec.pos();
-        let line = format!("{}_{}\n", chr, pos).into_bytes();
-        let _ = of.write_all(&line).unwrap();
-    }
-}
-
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use tempfile::tempdir;
-    use sprs::io::read_matrix_market;
-    // the idea here is to perform regression testing by running the full main() function
-    // against the pre-evaluated test dataset. I have previously validated the output matrix
-    // in all of the standard operating modes. I have stored these matrices in the test/ folder
-    // and now run the program in each operating mode to ensure the output has not changed
+    //use sprs::io::read_matrix_market;
 
     #[test]
-    fn test_consensus_matrix() {
+    fn test_allele_fasta() {
         let mut cmds = Vec::new();
         let tmp_dir = tempdir().unwrap();
-        let out_file = tmp_dir.path().join("result.mtx");
+        let out_file = tmp_dir.path().join("result1.mtx");
         let out_file = out_file.to_str().unwrap();
-        for l in &["vartrix", "-v", "test/test.vcf", "-b", "test/test.bam",
-                   "-f", "test/test.fa", "-c", "test/barcodes.tsv",
+        for l in &["vartrix", 
+                   "-b", "test/hla/test.bam",
+                   "-g", "test/hla/genomic_ABC.fa", 
+                   "-f", "test/hla/cds_ABC.fa",
+                   "-c", "test/hla/barcodes1.tsv",
+                   //"-r", "6:29941260-29945884",
                    "-o", out_file] {
             cmds.push(l.to_string());
         }
         _main(cmds);
-
-        let seen_mat: TriMat<usize> = read_matrix_market(out_file).unwrap();
-        let expected_mat: TriMat<usize> = read_matrix_market("test/test_consensus.mtx").unwrap();
-        assert_eq!(seen_mat.to_csr(), expected_mat.to_csr());
+//        let seen_mat: TriMat<usize> = read_matrix_market(out_file).unwrap();
+//        let expected_mat: TriMat<usize> = read_matrix_market("test/test_frac.mtx").unwrap();
+//        assert_eq!(seen_mat.to_csr(), expected_mat.to_csr());
     }
-
+    
     #[test]
-    fn test_frac_matrix() {
+    fn test_allele_nofasta() {
         let mut cmds = Vec::new();
         let tmp_dir = tempdir().unwrap();
-        let out_file = tmp_dir.path().join("result.mtx");
+        let out_file = tmp_dir.path().join("result2.mtx");
         let out_file = out_file.to_str().unwrap();
-        for l in &["vartrix", "-v", "test/test.vcf", "-b", "test/test.bam",
-                   "-f", "test/test.fa", "-c", "test/barcodes.tsv",
-                   "-o", out_file, "-s", "alt_frac"] {
+        for l in &["vartrix", 
+                   "-b", "test/hla/test.bam",
+                   "-d", "/Users/charlotte.darby/bespin/arcasHLA/dat/IMGTHLA",
+                   "-c", "test/hla/barcodes1.tsv",
+                   //"-r", "6:29941260-29945884",
+                   "-o", out_file] {
             cmds.push(l.to_string());
         }
         _main(cmds);
-
-        let seen_mat: TriMat<usize> = read_matrix_market(out_file).unwrap();
-        let expected_mat: TriMat<usize> = read_matrix_market("test/test_frac.mtx").unwrap();
-        assert_eq!(seen_mat.to_csr(), expected_mat.to_csr());
+//        let seen_mat: TriMat<usize> = read_matrix_market(out_file).unwrap();
+//        let expected_mat: TriMat<usize> = read_matrix_market("test/test_frac.mtx").unwrap();
+//        assert_eq!(seen_mat.to_csr(), expected_mat.to_csr());
     }
-
-    #[test]
-    fn test_coverage_matrices() {
-        let mut cmds = Vec::new();
-        let tmp_dir = tempdir().unwrap();
-        let out_file = tmp_dir.path().join("result.mtx");
-        let out_file = out_file.to_str().unwrap();
-        let out_ref = tmp_dir.path().join("result_ref.mtx");
-        let out_ref = out_ref.to_str().unwrap();
-        for l in &["vartrix", "-v", "test/test.vcf", "-b", "test/test.bam",
-                   "-f", "test/test.fa", "-c", "test/barcodes.tsv",
-                   "-o", out_file, "-s", "coverage", "--ref-matrix", out_ref] {
-            cmds.push(l.to_string());
-        }
-        _main(cmds);
-
-        let seen_mat: TriMat<usize> = read_matrix_market(out_file).unwrap();
-        let expected_mat: TriMat<usize> = read_matrix_market("test/test_coverage.mtx").unwrap();
-        assert_eq!(seen_mat.to_csr(), expected_mat.to_csr());
-        let seen_mat: TriMat<usize> = read_matrix_market(out_ref).unwrap();
-        let expected_mat: TriMat<usize> = read_matrix_market("test/test_coverage_ref.mtx").unwrap();
-        assert_eq!(seen_mat.to_csr(), expected_mat.to_csr());
-    }
-
-    #[test]
-    fn test_coverage_matrices_umi() {
-        let mut cmds = Vec::new();
-        let tmp_dir = tempdir().unwrap();
-        let out_file = tmp_dir.path().join("result.mtx");
-        let out_file = out_file.to_str().unwrap();
-        let out_ref = tmp_dir.path().join("result_ref.mtx");
-        let out_ref = out_ref.to_str().unwrap();
-        for l in &["vartrix", "-v", "test/test.vcf", "-b", "test/test.bam",
-                   "-f", "test/test.fa", "-c", "test/barcodes.tsv", "--umi",
-                   "-o", out_file, "-s", "coverage", "--ref-matrix", out_ref] {
-            cmds.push(l.to_string());
-        }
-        _main(cmds);
-
-        let seen_mat: TriMat<usize> = read_matrix_market(out_file).unwrap();
-        let expected_mat: TriMat<usize> = read_matrix_market("test/test_coverage_umi.mtx").unwrap();
-        assert_eq!(seen_mat.to_csr(), expected_mat.to_csr());
-        let seen_mat: TriMat<usize> = read_matrix_market(out_ref).unwrap();
-        let expected_mat: TriMat<usize> = read_matrix_market("test/test_coverage_ref_umi.mtx").unwrap();
-        assert_eq!(seen_mat.to_csr(), expected_mat.to_csr());
-    }
-
-    #[test]
-    fn test_coverage_matrices_umi_dna() {
-        // this test should produce an empty pair of matrices
-        let mut cmds = Vec::new();
-        let tmp_dir = tempdir().unwrap();
-        let out_file = tmp_dir.path().join("result.mtx");
-        let out_file = out_file.to_str().unwrap();
-        let out_ref = tmp_dir.path().join("result_ref.mtx");
-        let out_ref = out_ref.to_str().unwrap();
-        for l in &["vartrix", "-v", "test/test_dna.vcf", "-b", "test/test_dna.bam",
-                   "-f", "test/test_dna.fa", "-c", "test/dna_barcodes.tsv", "--umi",
-                   "-o", out_file, "-s", "coverage", "--ref-matrix", out_ref] {
-            cmds.push(l.to_string());
-        }
-        _main(cmds);
-
-        let seen_mat: TriMat<usize> = read_matrix_market(out_file).unwrap();
-        let expected_mat: TriMat<usize> = read_matrix_market("test/test_dna_umi.mtx").unwrap();
-        assert_eq!(seen_mat.to_csr(), expected_mat.to_csr());
-        let seen_mat: TriMat<usize> = read_matrix_market(out_ref).unwrap();
-        let expected_mat: TriMat<usize> = read_matrix_market("test/test_dna_ref_umi.mtx").unwrap();
-        assert_eq!(seen_mat.to_csr(), expected_mat.to_csr());
-    }
-
-    #[test]
-    fn test_coverage_matrices_dna() {
-        let mut cmds = Vec::new();
-        let tmp_dir = tempdir().unwrap();
-        let out_file = tmp_dir.path().join("result.mtx");
-        let out_file = out_file.to_str().unwrap();
-        let out_ref = tmp_dir.path().join("result_ref.mtx");
-        let out_ref = out_ref.to_str().unwrap();
-        for l in &["vartrix", "-v", "test/test_dna.vcf", "-b", "test/test_dna.bam",
-                   "-f", "test/test_dna.fa", "-c", "test/dna_barcodes.tsv",
-                   "-o", out_file, "-s", "coverage", "--ref-matrix", out_ref] {
-            cmds.push(l.to_string());
-        }
-        _main(cmds);
-
-        let seen_mat: TriMat<usize> = read_matrix_market(out_file).unwrap();
-        let expected_mat: TriMat<usize> = read_matrix_market("test/test_dna.mtx").unwrap();
-        assert_eq!(seen_mat.to_csr(), expected_mat.to_csr());
-        let seen_mat: TriMat<usize> = read_matrix_market(out_ref).unwrap();
-        let expected_mat: TriMat<usize> = read_matrix_market("test/test_dna_ref.mtx").unwrap();
-        assert_eq!(seen_mat.to_csr(), expected_mat.to_csr());
-    }
-
 }
