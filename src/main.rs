@@ -21,7 +21,7 @@ use itertools::Itertools;
 use std::collections::{HashMap};
 use std::process;
 use clap::{Arg, App};
-use std::fs::File;
+use std::fs::{File,create_dir_all};
 //use std::io::prelude::*;
 use bio::io::fasta;
 use bio::alignment::pairwise::Aligner;
@@ -38,6 +38,10 @@ use debruijn_mapping::hla::Allele;
 use debruijn_mapping::hla::AlleleParser;
 use debruijn_mapping::locus::Locus;
 use std::str::FromStr;
+use std::io::{BufWriter,Write};
+use std::string::String;
+//use std::error::Error as ErrorTrait;
+//use std::fmt;
 
 const MIN_SCORE: i32 = 25;
 const GENE_CONSENSUS_THRESHOLD: f64 = 0.5;
@@ -75,11 +79,16 @@ fn get_args() -> clap::App<'static, 'static> {
          .value_name("OUTPUT_FILE")
          .default_value("out_matrix.mtx")
          .help("Output Matrix Market file (.mtx)"))
-    .arg(Arg::with_name("out_columns")
-         .long("out-columns")
-         .value_name("OUTPUT_COLUMNS")
-         .default_value("columns.tsv")
-         .help("Column names for the .mtx file"))
+    .arg(Arg::with_name("out_labels")
+         .long("out-labels")
+         .value_name("OUTPUT_LABELS")
+         .default_value("labels.tsv")
+         .help("Labels for the genes/alleles (rows) in the .mtx file"))
+    .arg(Arg::with_name("pseudoalignertmp")
+         .long("pl-tmp")
+         .value_name("PSEUDOALIGNER_TMP")
+         .default_value(".")
+         .help("Directory to write the pseudoaligner temporary files generated"))
     // Input parameters (optional)
     .arg(Arg::with_name("fastagenomic")
          .short("g")
@@ -138,24 +147,29 @@ fn main() {
     for arg in std::env::args_os() {
         cli_args.push(arg.into_string().unwrap());
     }
-    _main(cli_args);
+    let res = _main(cli_args);
+    if let Err(e) = res {
+        println!("Failed with error {}", e);
+        process::exit(1);
+    }
 }
 
 // constructing a _main allows for us to run regression tests way more easily
 #[allow(clippy::cognitive_complexity)] 
-fn _main(cli_args: Vec<String>) {
+fn _main(cli_args: Vec<String>) -> Result<(), Error> {
     let args = get_args().get_matches_from(cli_args);
     //let fasta_file_gen = args.value_of("fastagenomic").expect("You must supply a genomic sequence fasta file");
     //let fasta_file_cds = args.value_of("fastacds").expect("You must supply a CDS fasta file");
     let fasta_file_gen = args.value_of("fastagenomic").unwrap_or_default();
     let fasta_file_cds = args.value_of("fastacds").unwrap_or_default();
     let hla_db_dir = args.value_of("hladbdir").unwrap_or_default();
+    let pseudoaligner_tmpdir = args.value_of("pseudoalignertmp").unwrap_or_default();
     let hla_index = args.value_of("hlaindex").unwrap_or_default();
     let bam_file = args.value_of("bam").expect("You must provide a BAM file");
     let cell_barcodes = args.value_of("cell_barcodes").expect("You must provide a cell barcodes file");
     let region = args.value_of("region").unwrap_or_default();
     let out_matrix_path = args.value_of("out_matrix").unwrap_or_default();
-    let out_columns_path = args.value_of("out_columns").unwrap_or_default();
+    let out_columns_path = args.value_of("out_labels").unwrap_or_default();
     let threads = args.value_of("threads").unwrap_or_default()
                                           .parse::<usize>()
                                           .expect("Failed to convert threads to integer");
@@ -167,7 +181,7 @@ fn _main(cli_args: Vec<String>) {
         "info" => LevelFilter::Info,
         "debug" => LevelFilter::Debug,
         "error" => LevelFilter::Error,
-        &_ => { println!("Log level not valid"); process::exit(1); }
+        &_ => { println!("Log level must be 'info', 'debug', or 'error'"); process::exit(1); }
     };
 
     let _ = SimpleLogger::init(ll, Config::default());
@@ -182,6 +196,7 @@ fn _main(cli_args: Vec<String>) {
     let (mut genomic, mut cds) : (&str, &str) = (fasta_file_cds, fasta_file_gen);
     // If the CDS or genomic FASTA files were not provided, generate them
     if fasta_file_gen.is_empty() || fasta_file_cds.is_empty() {
+        check_inputs_exist_pseudoaligner(pseudoaligner_tmpdir);
         if hla_db_dir.is_empty() {
             error!("Must provide either -d (database directory) or both -g and -f (FASTA sequences).");
             process::exit(1);
@@ -313,23 +328,29 @@ fn _main(cli_args: Vec<String>) {
     };
     
     // Mapping of genes/alleles to column numbers in the matrix
+
+    let mut colnames_file = BufWriter::new(File::create(out_columns_path).unwrap());
     let mut genes_to_colnums : HashMap<Vec<u8>,usize> = HashMap::new();
     let mut ncols : usize = 0;
     for g in &genes {
+        writeln!(colnames_file, "{}", String::from_utf8(g.a1.gene.clone()).unwrap())?;
+        writeln!(colnames_file, "{}", g.a1.clone())?;
         genes_to_colnums.insert(g.a1.gene.clone(), ncols);
         ncols += 2;
         if g.a2.is_some() {
+            writeln!(colnames_file, "{}", &g.a2.clone().unwrap())?;
             ncols += 1;
         }
     }
+    colnames_file.flush()?;
     
-    let res = align_to_alleles(&mut reader,
-                        &genes,
-                        &cell_barcodes,
-                        &args_holder,
-                        &mut r,
-                        &region,
-                        );
+    align_to_alleles(&mut reader,
+                    &genes,
+                    &cell_barcodes,
+                    &args_holder,
+                    &mut r,
+                    &region,
+                    )?;
     let metrics = r.metrics;
     debug!("Finished aligning reads for all variants");
     
@@ -368,9 +389,19 @@ fn _main(cli_args: Vec<String>) {
 
     debug!("Finished aligning reads for all variants");
 */
+    Ok(())
 }
 
 /* Structs */
+
+/*#[derive(Debug)]
+struct MyError(String);
+impl fmt::Display for MyError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "There is an error: {}", self.0)
+    }
+}
+impl ErrorTrait for MyError {}*/
 
 pub struct Gene {
     pub a1 : Allele,
@@ -453,7 +484,7 @@ impl Clone for ReaderWrapper {
 pub fn validate_output_path(p: &str) {
     let path = Path::new(p);
         if path.exists() {
-            error!("Output path already exists");
+            error!("Output path {} already exists", p);
             process::exit(1);
         }
         let _parent_dir = path.parent();
@@ -504,12 +535,21 @@ pub fn check_inputs_exist(bam_file: &str, cell_barcodes: &str,
     }
 }
 
+pub fn check_inputs_exist_pseudoaligner(path: &str) {
+    if !Path::new(&path).exists() {
+        match create_dir_all(&path) {
+            Err(e) => { error!("Couldn't create temp directory at {}", path); process::exit(1); }
+            _ => { info!("Created temp directory at {}", path); }
+        }
+    } 
+}
+
 pub fn check_inputs_exist_hla_db(path: &str) {
     if !Path::new(&path).exists() {
         error!("IMGT-HLA database directory {} does not exist", path);
         process::exit(1);
     }
-    for file in [ "hla_gen.fasta",  "hla_gen.fasta.fai", "hla_nuc.fasta", "hla_nuc.fasta.fai", "Allele_status.txt" ].iter() { //TODO if need "wmda/hla_nom_g.txt",
+    for file in [ "hla_gen.fasta", "hla_nuc.fasta", "Allele_status.txt" ].iter() {
         let file1 = [path,file].join("/");
         if !Path::new(&file1).exists() {
             error!("IMGT-HLA database file {} does not exist", file);
@@ -578,6 +618,7 @@ pub fn get_umi(rec: &Record) -> Option<Vec<u8>> {
 }
 
 /* Alignment Function */
+#[allow(clippy::cognitive_complexity)] 
 pub fn align_to_alleles(bam: &mut bam::IndexedReader,
                         genes: &Vec<Gene>,
                         cell_barcodes: &HashMap<Vec<u8>, u32>,
@@ -685,7 +726,11 @@ pub fn align_to_alleles(bam: &mut bam::IndexedReader,
         };
         debug!("{:?}",s);
         r.scores.push(s);
+        if r.metrics.num_reads % 100_000 == 0 {
+            info!("analyzed {} reads. Mapped {} to CDS, {} to genomic", r.metrics.num_reads, r.metrics.num_cds_align, r.metrics.num_gen_align);
+        }
     }
+    info!("analyzed {} reads. Mapped {} to CDS, {} to genomic", r.metrics.num_reads, r.metrics.num_cds_align, r.metrics.num_gen_align);
     Ok(())
 }
 
@@ -695,7 +740,7 @@ pub fn count_molecules(scores: &Vec<Scores>,
                        ncols : usize,
 ) -> Vec<MatrixEntry> {
    let mut entries = Vec::new();
-   for (cell_index, cell_scores) in &scores.iter().sorted_by_key(|s| s.cell_index).iter().group_by(|s| s.cell_index) {
+   for (cell_index, cell_scores) in &scores.iter().sorted_by_key(|s| s.cell_index).group_by(|s| s.cell_index) {
         let mut matrix_row : Vec<usize> = vec![0; ncols];
         let mut parsed_scores : HashMap<&Vec<u8>,Vec<&Scores>> = HashMap::new();
         for score in cell_scores.into_iter() { 
@@ -834,46 +879,104 @@ pub fn evaluate_rec<'a>(rh: &RecHolder,
 mod tests {
     use super::*;
     use tempfile::tempdir;
-    //use sprs::io::read_matrix_market;
+    use sprs::io::read_matrix_market;
 
     #[test]
-    fn test_allele_fasta() {
+    fn d_test_allele_fasta_debug_1min() {
+        //This test takes ~1min in compliation "debug" mode
+        //21 alignments x 6 allele sequences
         let mut cmds = Vec::new();
         let tmp_dir = tempdir().unwrap();
         let out_file = tmp_dir.path().join("result1.mtx");
         let out_file = out_file.to_str().unwrap();
+        let out_labels = tmp_dir.path().join("labels1.tsv");
+        let out_labels = out_labels.to_str().unwrap();
         for l in &["vartrix", 
                    "-b", "test/hla/test.bam",
                    "-g", "test/hla/genomic_ABC.fa", 
                    "-f", "test/hla/cds_ABC.fa",
                    "-c", "test/hla/barcodes1.tsv",
-                   //"-r", "6:29941260-29945884",
-                   "-o", out_file] {
+                   "-r", "6:29941260-29941360",
+                   "--pl-tmp", tmp_dir.path().to_str().unwrap(),
+                   "-o", out_file,
+                   "--out-labels", out_labels ] {
+
             cmds.push(l.to_string());
         }
-        _main(cmds);
-//        let seen_mat: TriMat<usize> = read_matrix_market(out_file).unwrap();
-//        let expected_mat: TriMat<usize> = read_matrix_market("test/test_frac.mtx").unwrap();
-//        assert_eq!(seen_mat.to_csr(), expected_mat.to_csr());
+        let res = _main(cmds);
+        assert!(!res.is_err());
+        let seen_mat: TriMat<usize> = read_matrix_market(out_file).unwrap();
+        let expected_mat: TriMat<usize> = read_matrix_market("test/hla/test_allele_fasta_debug.mtx").unwrap();
+        assert_eq!(seen_mat.to_csr(), expected_mat.to_csr());
     }
     
     #[test]
-    fn test_allele_nofasta() {
+    fn r_test_allele_fasta_release_2min() {
+        //This test takes ~2min in compilation "release" mode
+        //2864 alignments x 6 allele sequences
         let mut cmds = Vec::new();
         let tmp_dir = tempdir().unwrap();
         let out_file = tmp_dir.path().join("result2.mtx");
         let out_file = out_file.to_str().unwrap();
+        let out_labels = tmp_dir.path().join("labels2.tsv");
+        let out_labels = out_labels.to_str().unwrap();
+        for l in &["vartrix", 
+                   "-b", "test/hla/test.bam",
+                   "-g", "test/hla/genomic_ABC.fa", 
+                   "-f", "test/hla/cds_ABC.fa",
+                   "-c", "test/hla/barcodes7.tsv",
+                   "--pl-tmp", tmp_dir.path().to_str().unwrap(),
+                   "-o", out_file,
+                   "--out-labels", out_labels ] {
+            cmds.push(l.to_string());
+        }
+        let res = _main(cmds);
+        assert!(!res.is_err());
+        let seen_mat: TriMat<usize> = read_matrix_market(out_file).unwrap();
+        let expected_mat: TriMat<usize> = read_matrix_market("test/hla/test_allele_fasta_release.mtx").unwrap();
+        assert_eq!(seen_mat.to_csr(), expected_mat.to_csr());
+    }
+    
+    #[test]
+    fn r_test_call() {
+        //This test takes 30sec in compilation "release" mode
+        //2864 alignments x 2 allele sequences
+        let mut cmds = Vec::new();
+        let tmp_dir = tempdir().unwrap();
+        let out_file = tmp_dir.path().join("result3.mtx");
+        let out_file = out_file.to_str().unwrap();
+                let out_labels = tmp_dir.path().join("labels3.tsv");
+        let out_labels = out_labels.to_str().unwrap();
         for l in &["vartrix", 
                    "-b", "test/hla/test.bam",
                    "-d", "/Users/charlotte.darby/bespin/arcasHLA/dat/IMGTHLA",
-                   "-c", "test/hla/barcodes1.tsv",
-                   //"-r", "6:29941260-29945884",
+                   "-i", "test/hla/hla_nuc.fasta.idx", 
+                   "-c", "test/hla/barcodes7.tsv",
                    "-o", out_file] {
             cmds.push(l.to_string());
         }
-        _main(cmds);
-//        let seen_mat: TriMat<usize> = read_matrix_market(out_file).unwrap();
-//        let expected_mat: TriMat<usize> = read_matrix_market("test/test_frac.mtx").unwrap();
-//        assert_eq!(seen_mat.to_csr(), expected_mat.to_csr());
+        let res = _main(cmds);
+        assert!(!res.is_err());
+        //TODO check pairs and weights files
+    }
+    
+    #[test]
+    fn b_test_call() {
+        let mut cmds = Vec::new();
+        let tmp_dir = tempdir().unwrap();
+        let out_file = tmp_dir.path().join("result4.mtx");
+        let out_file = out_file.to_str().unwrap();
+                let out_labels = tmp_dir.path().join("labels4.tsv");
+        let out_labels = out_labels.to_str().unwrap();
+        for l in &["vartrix", 
+                   "-b", "test/hla/test.bam",
+                   "-d", "/Users/charlotte.darby/bespin/arcasHLA/dat/IMGTHLA",
+                   "-i", "test/hla/hla_nuc.fasta.idx", 
+                   "-c", "test/hla/barcodes0.tsv",
+                   "-o", out_file] {
+            cmds.push(l.to_string());
+        }
+        let res = _main(cmds);
+        assert!(!res.is_err());
     }
 }

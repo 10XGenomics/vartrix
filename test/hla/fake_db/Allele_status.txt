@@ -1,0 +1,8 @@
+# file: Allele_status.txt
+Allele,Cells,Groups,Confirmed,Start,End,Partial,Type
+A*02:01:154,2,2,Confirmed,1,1098,Full,gDNA
+A*31:01:02:01,14,9,Confirmed,1,1098,Full,gDNA
+B*51:01:01:01,14,9,Confirmed,1,1089,Full,gDNA
+B*27:05:02:01,11,8,Confirmed,1,1089,Full,gDNA
+C*02:02:02:01,5,6,Confirmed,1,1101,Full,gDNA
+C*14:02:01:01,8,10,Confirmed,1,1101,Full,gDNA
