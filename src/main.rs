@@ -189,17 +189,7 @@ fn _main(cli_args: Vec<String>) {
 
     check_inputs_exist(fasta_file, vcf_file, bam_file, cell_barcodes, out_matrix_path, ref_matrix_path);
 
-    let mut rdr = bcf::Reader::from_path(&vcf_file).unwrap();
     let cell_barcodes = load_barcodes(&cell_barcodes).unwrap();
-
-    // need to figure out how big to make the matrix, so just read the number of lines in the VCF
-    let num_vars = rdr.records().count();
-    if num_vars == 0 {
-        error!("Warning! Zero variants found in input VCF. Output matrices will be by definition empty but will still be generated.");
-    }
-    info!("Initialized a {} variants x {} cell barcodes matrix", num_vars, cell_barcodes.len());
-    let mut matrix = TriMat::new((num_vars, cell_barcodes.len()));
-    let mut ref_matrix = TriMat::new((num_vars, cell_barcodes.len()));
 
     let mut rdr = bcf::Reader::from_path(&vcf_file).unwrap(); // have to re-start the reader
 
@@ -213,6 +203,17 @@ fn _main(cli_args: Vec<String>) {
                             cell_barcodes: &cell_barcodes};
         recs.push(s);
     }
+
+    // need to figure out how big to make the matrix, so just read the number of lines in the VCF
+    let num_vars = recs.len();
+    if num_vars == 0 {
+        error!("Warning! Zero variants found in input VCF. Output matrices will be by definition empty but will still be generated.");
+    }
+
+    info!("Initialized a {} variants x {} cell barcodes matrix", num_vars, cell_barcodes.len());
+    let mut matrix = TriMat::new((num_vars, cell_barcodes.len()));
+    let mut ref_matrix = TriMat::new((num_vars, cell_barcodes.len()));
+
 
     let mut rec_chunks = Vec::new();
     let chunk_size = max(num_vars / threads, 1);
@@ -448,7 +449,7 @@ pub fn check_inputs_exist(fasta_file: &str, vcf_file: &str, bam_file: &str, cell
     }
 }
 
-
+#[inline(never)]
 pub fn validate_inputs(recs: &std::vec::Vec<RecHolder<'_>>, bam_file: &str, fasta_file: &str) {
     // generate a set of all chromosome names seen in the records and then make sure
     // that these can be found in the FASTA as well as the BAM
@@ -467,6 +468,8 @@ pub fn validate_inputs(recs: &std::vec::Vec<RecHolder<'_>>, bam_file: &str, fast
     }
 
     let mut fa = fasta::IndexedReader::from_file(&fasta_file).unwrap();
+    let sizes = make_chrom_size_table(&fa);
+
     for rh in recs {
         let chr = String::from_utf8(rh.rec.header().rid2name(rh.rec.rid().unwrap()).to_vec()).unwrap();
         if !fa_seqs.contains(&chr) {
@@ -477,7 +480,7 @@ pub fn validate_inputs(recs: &std::vec::Vec<RecHolder<'_>>, bam_file: &str, fast
             error!("Sequence {} not seen in BAM", chr);
             process::exit(1);
         }
-        let chrom_len = chrom_len(&chr, &mut fa).unwrap();
+        let chrom_len = chrom_len_fast(&chr, &sizes).unwrap();
         let alleles = rh.rec.alleles();
         let end = rh.rec.pos() + alleles[0].len() as u32;
         if end as u64 > chrom_len {
@@ -499,7 +502,7 @@ pub fn evaluate_chunk<'a>(chunk: &&[RecHolder<'_>],
     Ok(chunk_scores)
 }
 
-
+#[inline(never)]
 pub fn evaluate_rec<'a>(rh: &RecHolder,
                         rdr: &mut ReaderWrapper,
                         args: &Arguments) 
@@ -604,6 +607,16 @@ pub fn get_umi(rec: &Record) -> Option<Vec<u8>> {
 }
 
 
+fn make_chrom_size_table(reader: &fasta::IndexedReader<File>) -> HashMap<String, u64> {
+
+    let mut map = HashMap::new();
+    for s in reader.index.sequences() {
+        map.insert(s.name.clone(), s.len);
+    }
+
+    map
+}
+
 pub fn chrom_len(chrom: &str, fa: &mut fasta::IndexedReader<File>) -> Result<u64, Error> {
     for s in fa.index.sequences() {
         if s.name == chrom {
@@ -613,6 +626,12 @@ pub fn chrom_len(chrom: &str, fa: &mut fasta::IndexedReader<File>) -> Result<u64
     Err(format_err!("Requested chromosome {} was not found in fasta", chrom))
 }
 
+pub fn chrom_len_fast(chrom: &str, chrom_sizes: &HashMap<String, u64>) -> Result<u64, Error> {
+    match chrom_sizes.get(chrom) {
+        Some(sz) => Ok(*sz),
+        None => Err(format_err!("Requested chromosome {} was not found in fasta", chrom))
+    }
+}
 
 pub fn useful_alignment(haps: &VariantHaps, rec: &bam::Record) -> Result<bool, Error> {
     // filter alignments to ensure that they truly overlap the region of interest
@@ -628,7 +647,7 @@ pub fn useful_alignment(haps: &VariantHaps, rec: &bam::Record) -> Result<bool, E
         Ok(false)
 }
 
-
+#[inline(never)]
 pub fn evaluate_alns(bam: &mut bam::IndexedReader, 
                     haps: &VariantHaps, 
                     cell_barcodes: &HashMap<Vec<u8>, u32>,
@@ -743,7 +762,8 @@ pub fn read_locus(fa: &mut fasta::IndexedReader<File>,
 
 
 // Get padded ref and alt haplotypes around the variant. Locus must cover the REF bases of the VCF variant.
-pub fn construct_haplotypes(fa: &mut fasta::IndexedReader<File>, 
+#[inline(never)]
+pub fn construct_haplotypes(fa: &mut fasta::IndexedReader<File>,
                             locus: &Locus, 
                             alt: &[u8], 
                             padding: u32) -> (Vec<u8>, Vec<u8>)
