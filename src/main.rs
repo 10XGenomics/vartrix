@@ -27,7 +27,7 @@ use bio::io::fasta;
 use bio::alignment::pairwise::banded;
 use rust_htslib::bam::{self, Read, Record};
 use rust_htslib::bam::record::Aux;
-use failure::Error;
+use failure::{Error, ResultExt};
 use std::path::Path;
 use std::io::{BufRead, BufReader};
 use sprs::io::write_matrix_market;
@@ -52,7 +52,7 @@ const GAP_EXTEND: i32 = -1;  // Gap extend score
 fn get_args() -> clap::App<'static, 'static> {
     let args = App::new("vartrix")
         .set_term_width(if let Some((Width(w), _)) = terminal_size() { w as usize } else { 120 })
-        .version("0.1")
+        .version(env!("CARGO_PKG_VERSION"))
         .author("Ian Fiddes <ian.fiddes@10xgenomics.com> and Patrick Marks <patrick@10xgenomics.com>")
         .about("Variant assignment for single cell genomics")
         .arg(Arg::with_name("vcf")
@@ -148,11 +148,28 @@ fn main() {
     for arg in std::env::args_os() {
         cli_args.push(arg.into_string().unwrap());
     }
-    _main(cli_args);
+    let res = _main(cli_args);
+
+    if let Err(v) = res {
+
+        let fail = v.as_fail();
+        println!("Vartrix error. v{}.", env!("CARGO_PKG_VERSION"));
+        println!("{}", fail);
+
+        for cause in fail.iter_causes() {
+            println!("\nInfo: caused by {}", cause);
+            println!("\n{:?}", cause.backtrace());
+        }
+
+        println!("\n{}", v.backtrace());
+
+        println!("If you think this is bug in Vartrix, please file a bug at https://github.com/10xGenomics/vartrix, and include the information above and the command-line you used.");
+        process::exit(1)
+    }
 }
 
 // constructing a _main allows for us to run regression tests way more easily
-fn _main(cli_args: Vec<String>) {
+fn _main(cli_args: Vec<String>) -> Result<(), Error> {
     let args = get_args().get_matches_from(cli_args);
     let fasta_file = args.value_of("fasta").expect("You must supply a fasta file");
     let vcf_file = args.value_of("vcf").expect("You must supply a VCF file");
@@ -189,13 +206,13 @@ fn _main(cli_args: Vec<String>) {
 
     check_inputs_exist(fasta_file, vcf_file, bam_file, cell_barcodes, out_matrix_path, ref_matrix_path);
 
-    let cell_barcodes = load_barcodes(&cell_barcodes).unwrap();
+    let cell_barcodes = load_barcodes(&cell_barcodes)?;
 
-    let mut rdr = bcf::Reader::from_path(&vcf_file).unwrap(); // have to re-start the reader
+    let mut rdr = bcf::Reader::from_path(&vcf_file)?; // have to re-start the reader
 
     let mut recs = Vec::new();
     for (i, _rec) in rdr.records().enumerate() {
-        let rec = _rec.unwrap();
+        let rec = _rec?;
         let s = RecHolder { i: i,
                             rec: rec, 
                             fasta_file: &fasta_file, 
@@ -221,13 +238,13 @@ fn _main(cli_args: Vec<String>) {
         rec_chunks.push(rec_chunk);
     }
 
-    validate_inputs(&recs, &bam_file, &fasta_file);
+    validate_inputs(&recs, &bam_file, &fasta_file)?;
 
     debug!("Parsed variant VCF");
 
     let rdr = ReaderWrapper {
         filename: bam_file.to_string(),
-        reader: bam::IndexedReader::from_path(&bam_file).unwrap()
+        reader: bam::IndexedReader::from_path(&bam_file).context(format!("error opening bam file: {}", bam_file))?
     };
 
     let args_holder = Arguments {
@@ -309,21 +326,23 @@ fn _main(cli_args: Vec<String>) {
     info!("Number of alignments skipped due to not being primary: {}", metrics.num_non_primary);
     info!("Number of alignments skipped due to being duplicates: {}", metrics.num_duplicates);
     info!("Number of alignments skipped due to not being associated with a cell barcode: {}", metrics.num_not_cell_bc);
-    info!("Number of alignments skipped due to not being useful: {}", metrics.num_not_useful);
+    info!("Number of alignments skipped due to not intersecting variant: {}", metrics.num_not_useful);
     info!("Number of alignments skipped due to not having a UMI: {}", metrics.num_non_umi);
     info!("Number of VCF records skipped due to having invalid characters in the alternative haplotype: {}",metrics.num_invalid_recs);
     info!("Number of VCF records skipped due to being multi-allelic: {}", metrics.num_multiallelic_recs);
 
-    let _ = write_matrix_market(&out_matrix_path as &str, &matrix).unwrap();
+    let _ = write_matrix_market(&out_matrix_path as &str, &matrix).context("Error writing out-matrix")?;
+    debug!("Wrote out matrix file");
+
     if args.is_present("ref_matrix") {
-        let _ = write_matrix_market(&ref_matrix_path as &str, &ref_matrix).unwrap();
+        let _ = write_matrix_market(&ref_matrix_path as &str, &ref_matrix).context("Error writing ref-matrix")?;
         debug!("Wrote reference matrix file");
     }
 
     if args.is_present("out_variants") {
         let out_variants = args.value_of("out_variants").expect("Out variants path flag set but no value");
-        write_variants(out_variants, vcf_file);
-        debug!("Wrote matrix file");
+        write_variants(out_variants, vcf_file)?;
+        debug!("Wrote variants file");
     }
 
     // warn the user if they may have made a mistake
@@ -331,6 +350,8 @@ fn _main(cli_args: Vec<String>) {
     if sum == 0.0 {
         error!("The resulting matrix has a sum of 0. Did you use the --umi flag on data without UMIs?")
     }
+
+    Ok(())
 }
 
 
@@ -450,28 +471,34 @@ pub fn check_inputs_exist(fasta_file: &str, vcf_file: &str, bam_file: &str, cell
 }
 
 #[inline(never)]
-pub fn validate_inputs(recs: &std::vec::Vec<RecHolder<'_>>, bam_file: &str, fasta_file: &str) {
+pub fn validate_inputs(recs: &std::vec::Vec<RecHolder<'_>>, bam_file: &str, fasta_file: &str) -> Result<(), Error> {
     // generate a set of all chromosome names seen in the records and then make sure
     // that these can be found in the FASTA as well as the BAM
     debug!("Checking VCF records for chromosome names that match those in BAM and FASTA");
     let fai = fasta_file.to_owned() + ".fai";
     let mut fa_seqs = HashSet::new();
-    for fa_seq in fasta::Index::from_file(&fai).unwrap().sequences() {
+
+    let fa_index_iter = 
+        fasta::Index::from_file(&fai)
+        .context(format!("error opening fasta index: {}", fai))?
+        .sequences();
+
+    for fa_seq in fa_index_iter {
         fa_seqs.insert(fa_seq.name);
     }
 
-    let bam = bam::IndexedReader::from_path(&bam_file).unwrap();
+    let bam = bam::IndexedReader::from_path(&bam_file)?;
     let header = bam.header();
     let mut bam_seqs = HashSet::new();
     for bam_seq in header.target_names() {
-        bam_seqs.insert(String::from_utf8(bam_seq.to_vec()).unwrap());
+        bam_seqs.insert(String::from_utf8(bam_seq.to_vec())?);
     }
 
-    let mut fa = fasta::IndexedReader::from_file(&fasta_file).unwrap();
+    let fa = fasta::IndexedReader::from_file(&fasta_file).context("error opening fasta file")?;
     let sizes = make_chrom_size_table(&fa);
 
     for rh in recs {
-        let chr = String::from_utf8(rh.rec.header().rid2name(rh.rec.rid().unwrap()).to_vec()).unwrap();
+        let chr = String::from_utf8(rh.rec.header().rid2name(rh.rec.rid().unwrap())?.to_vec()).unwrap();
         if !fa_seqs.contains(&chr) {
             error!("Sequence {} not seen in FASTA", chr);
             process::exit(1);
@@ -480,7 +507,7 @@ pub fn validate_inputs(recs: &std::vec::Vec<RecHolder<'_>>, bam_file: &str, fast
             error!("Sequence {} not seen in BAM", chr);
             process::exit(1);
         }
-        let chrom_len = chrom_len_fast(&chr, &sizes).unwrap();
+        let chrom_len = chrom_len_fast(&chr, &sizes)?;
         let alleles = rh.rec.alleles();
         let end = rh.rec.pos() + alleles[0].len() as u32;
         if end as u64 > chrom_len {
@@ -488,6 +515,8 @@ pub fn validate_inputs(recs: &std::vec::Vec<RecHolder<'_>>, bam_file: &str, fast
             process::exit(1);
         }
     }
+
+    Ok(())
 }
 
 pub fn evaluate_chunk<'a>(chunk: &&[RecHolder<'_>],
@@ -507,7 +536,7 @@ pub fn evaluate_rec<'a>(rh: &RecHolder,
                         rdr: &mut ReaderWrapper,
                         args: &Arguments) 
                             -> Result<(usize, EvaluateAlnResults), Error> {
-    let chr = String::from_utf8(rh.rec.header().rid2name(rh.rec.rid().unwrap()).to_vec())?;
+    let chr = String::from_utf8(rh.rec.header().rid2name(rh.rec.rid().unwrap())?.to_vec())?;
 
     let alleles = rh.rec.alleles();
  
@@ -957,17 +986,19 @@ pub fn coverage(results: &EvaluateAlnResults, i: usize, umi: bool) -> (Vec<(u32,
 }
 
 
-pub fn write_variants(out_variants: &str, vcf_file: &str) {
+pub fn write_variants(out_variants: &str, vcf_file: &str) -> Result<(), Error> {
     // write the variants to a TSV file for easy loading into Seraut
-    let mut rdr = bcf::Reader::from_path(&vcf_file).unwrap();
-    let mut of = File::create(out_variants).unwrap();
+    let mut rdr = bcf::Reader::from_path(&vcf_file).context("error opening vcf file")?;
+    let mut of = std::io::BufWriter::new(File::create(out_variants)?);
     for _rec in rdr.records() {
-        let rec = _rec.unwrap();
-        let chr = String::from_utf8(rec.header().rid2name(rec.rid().unwrap()).to_vec()).unwrap();
+        let rec = _rec?;
+        let chr = String::from_utf8(rec.header().rid2name(rec.rid().unwrap())?.to_vec())?;
         let pos = rec.pos();
         let line = format!("{}_{}\n", chr, pos).into_bytes();
-        let _ = of.write_all(&line).unwrap();
+        let _ = of.write_all(&line).context("error writing variants file")?;
     }
+
+    Ok(())
 }
 
 
@@ -992,7 +1023,7 @@ mod tests {
                    "-o", out_file] {
             cmds.push(l.to_string());
         }
-        _main(cmds);
+        _main(cmds).unwrap();
 
         let seen_mat: TriMat<usize> = read_matrix_market(out_file).unwrap();
         let expected_mat: TriMat<usize> = read_matrix_market("test/test_consensus.mtx").unwrap();
@@ -1010,7 +1041,7 @@ mod tests {
                    "-o", out_file, "-s", "alt_frac"] {
             cmds.push(l.to_string());
         }
-        _main(cmds);
+        _main(cmds).unwrap();
 
         let seen_mat: TriMat<usize> = read_matrix_market(out_file).unwrap();
         let expected_mat: TriMat<usize> = read_matrix_market("test/test_frac.mtx").unwrap();
@@ -1030,7 +1061,7 @@ mod tests {
                    "-o", out_file, "-s", "coverage", "--ref-matrix", out_ref] {
             cmds.push(l.to_string());
         }
-        _main(cmds);
+        _main(cmds).unwrap();
 
         let seen_mat: TriMat<usize> = read_matrix_market(out_file).unwrap();
         let expected_mat: TriMat<usize> = read_matrix_market("test/test_coverage.mtx").unwrap();
@@ -1053,7 +1084,7 @@ mod tests {
                    "-o", out_file, "-s", "coverage", "--ref-matrix", out_ref] {
             cmds.push(l.to_string());
         }
-        _main(cmds);
+        _main(cmds).unwrap();
 
         let seen_mat: TriMat<usize> = read_matrix_market(out_file).unwrap();
         let expected_mat: TriMat<usize> = read_matrix_market("test/test_coverage_umi.mtx").unwrap();
@@ -1077,7 +1108,7 @@ mod tests {
                    "-o", out_file, "-s", "coverage", "--ref-matrix", out_ref] {
             cmds.push(l.to_string());
         }
-        _main(cmds);
+        _main(cmds).unwrap();
 
         let seen_mat: TriMat<usize> = read_matrix_market(out_file).unwrap();
         let expected_mat: TriMat<usize> = read_matrix_market("test/test_dna_umi.mtx").unwrap();
@@ -1100,7 +1131,7 @@ mod tests {
                    "-o", out_file, "-s", "coverage", "--ref-matrix", out_ref] {
             cmds.push(l.to_string());
         }
-        _main(cmds);
+        _main(cmds).unwrap();
 
         let seen_mat: TriMat<usize> = read_matrix_market(out_file).unwrap();
         let expected_mat: TriMat<usize> = read_matrix_market("test/test_dna.mtx").unwrap();
