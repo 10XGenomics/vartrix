@@ -8,6 +8,7 @@ extern crate rayon;
 extern crate terminal_size;
 extern crate tempfile;
 extern crate simplelog;
+extern crate flate2;
 #[macro_use]
 extern crate log;
 #[macro_use]
@@ -35,6 +36,8 @@ use sprs::TriMat;
 use rust_htslib::bcf::{self, Read as BcfRead};
 use rayon::prelude::*;
 use terminal_size::{Width, terminal_size};
+use flate2::read::MultiGzDecoder;
+
 
 const REF_VALUE: i8 = 1;
 const ALT_VALUE: i8 = 2;
@@ -144,6 +147,7 @@ fn get_args() -> clap::App<'static, 'static> {
 
 
 fn main() {
+    std::env::set_var("RUST_BACKTRACE", "1");
     setup_panic!();  // pretty panics for users
     let mut cli_args = Vec::new();
     for arg in std::env::args_os() {
@@ -155,11 +159,10 @@ fn main() {
 
         let fail = v.as_fail();
         println!("Vartrix error. v{}.", env!("CARGO_PKG_VERSION"));
-        println!("{}", fail);
+        println!("Error: {}", fail);
 
         for cause in fail.iter_causes() {
-            println!("\nInfo: caused by {}", cause);
-            println!("\n{:?}", cause.backtrace());
+            println!("Info: caused by {}", cause);
         }
 
         println!("\n{}", v.backtrace());
@@ -611,15 +614,14 @@ pub fn evaluate_rec<'a>(rh: &RecHolder,
     Ok((rh.i, r))
 }
 
-
 pub fn load_barcodes(filename: impl AsRef<Path>) -> Result<HashMap<Vec<u8>, u32>, Error> {
-    let r = File::open(filename.as_ref())?;
+    let r = open_with_gz(filename.as_ref()).context(format!("error open barcodes file: {:?}", filename.as_ref()))?;
     let reader = BufReader::with_capacity(32 * 1024, r);
 
     let mut bc_set = HashMap::new();
 
     for (i, l) in reader.lines().enumerate() {
-        let seq = l?.into_bytes();
+        let seq = l.context("error reading barcodes file")?.into_bytes();
         bc_set.insert(seq, i as u32);
     }
     let num_bcs = bc_set.len();
@@ -629,6 +631,23 @@ pub fn load_barcodes(filename: impl AsRef<Path>) -> Result<HashMap<Vec<u8>, u32>
     }
     debug!("Loaded {} barcodes", num_bcs);
     Ok(bc_set)
+}
+
+
+/// Open a (possibly gzipped) file into a BufReader.
+pub fn open_with_gz<P: AsRef<Path>>(p: P) -> Result<Box<dyn BufRead>, Error> {
+    let r = File::open(p.as_ref())?;
+
+    let ext = p.as_ref().extension().unwrap();
+
+    if ext == "gz" {
+        let gz = MultiGzDecoder::new(r);
+        let buf_reader = BufReader::new(gz);
+        Ok(Box::new(buf_reader))
+    } else {
+        let buf_reader = BufReader::new(r);
+        Ok(Box::new(buf_reader))
+    }
 }
 
 
@@ -1099,6 +1118,29 @@ mod tests {
         let out_ref = out_ref.to_str().unwrap();
         for l in &["vartrix", "-v", "test/test.vcf", "-b", "test/test.bam",
                    "-f", "test/test.fa", "-c", "test/barcodes.tsv", "--umi",
+                   "-o", out_file, "-s", "coverage", "--ref-matrix", out_ref] {
+            cmds.push(l.to_string());
+        }
+        _main(cmds).unwrap();
+
+        let seen_mat: TriMat<usize> = read_matrix_market(out_file).unwrap();
+        let expected_mat: TriMat<usize> = read_matrix_market("test/test_coverage_umi.mtx").unwrap();
+        assert_eq!(seen_mat.to_csr(), expected_mat.to_csr());
+        let seen_mat: TriMat<usize> = read_matrix_market(out_ref).unwrap();
+        let expected_mat: TriMat<usize> = read_matrix_market("test/test_coverage_ref_umi.mtx").unwrap();
+        assert_eq!(seen_mat.to_csr(), expected_mat.to_csr());
+    }
+
+    #[test]
+    fn test_coverage_matrices_umi_gzipped_bcs() {
+        let mut cmds = Vec::new();
+        let tmp_dir = tempdir().unwrap();
+        let out_file = tmp_dir.path().join("result.mtx");
+        let out_file = out_file.to_str().unwrap();
+        let out_ref = tmp_dir.path().join("result_ref.mtx");
+        let out_ref = out_ref.to_str().unwrap();
+        for l in &["vartrix", "-v", "test/test.vcf", "-b", "test/test.bam",
+                   "-f", "test/test.fa", "-c", "test/barcodes.tsv.gz", "--umi",
                    "-o", out_file, "-s", "coverage", "--ref-matrix", out_ref] {
             cmds.push(l.to_string());
         }

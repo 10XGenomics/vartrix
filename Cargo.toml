@@ -18,6 +18,7 @@ simplelog = "0.5.0"
 log = "*"
 tempfile = "*"
 itertools = "0.6"
+flate2 = { version = "1.0", features = ["rust_backend"], default-features = false }
 
 [profile.release]
 debug = 1
