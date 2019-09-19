@@ -83,8 +83,8 @@ fn get_args() -> clap::App<'static, 'static> {
              .short("o")
              .long("out-matrix")
              .value_name("OUTPUT_FILE")
-             .help("Output Matrix Market file (.mtx)")
-             .required(true))
+             .default_value("out_matrix.mtx")
+             .help("Output Matrix Market file (.mtx)"))
         .arg(Arg::with_name("out_variants")
              .long("out-variants")
              .value_name("OUTPUT_FILE")
@@ -105,6 +105,7 @@ fn get_args() -> clap::App<'static, 'static> {
              .long("ref-matrix")
              .value_name("OUTPUT_FILE")
              .required_if("scoring_method", "coverage")
+             .default_value("ref_matrix.mtx")
              .help("Location to write reference Matrix Market file. Only used if --scoring-method is coverage"))
         .arg(Arg::with_name("log_level")
              .long("log-level")
@@ -175,8 +176,8 @@ fn _main(cli_args: Vec<String>) -> Result<(), Error> {
     let vcf_file = args.value_of("vcf").expect("You must supply a VCF file");
     let bam_file = args.value_of("bam").expect("You must provide a BAM file");
     let cell_barcodes = args.value_of("cell_barcodes").expect("You must provide a cell barcodes file");
-    let out_matrix_path = args.value_of("out_matrix").expect("You must provide a path to write the out matrix");
-    let ref_matrix_path = args.value_of("ref_matrix").unwrap_or("ref.matrix");
+    let out_matrix_path = args.value_of("out_matrix").unwrap_or_default();
+    let ref_matrix_path = args.value_of("ref_matrix").unwrap_or_default();
     let padding = args.value_of("padding")
                       .unwrap_or_default()
                       .parse::<u32>()
@@ -334,13 +335,14 @@ fn _main(cli_args: Vec<String>) -> Result<(), Error> {
     let _ = write_matrix_market(&out_matrix_path as &str, &matrix).context("Error writing out-matrix")?;
     debug!("Wrote out matrix file");
 
-    if args.is_present("ref_matrix") {
+    if scoring_method == "coverage" && args.is_present("ref_matrix") {
         let _ = write_matrix_market(&ref_matrix_path as &str, &ref_matrix).context("Error writing ref-matrix")?;
         debug!("Wrote reference matrix file");
     }
 
     if args.is_present("out_variants") {
         let out_variants = args.value_of("out_variants").expect("Out variants path flag set but no value");
+        validate_output_path(&out_variants);
         write_variants(out_variants, vcf_file)?;
         debug!("Wrote variants file");
     }
@@ -417,27 +419,37 @@ impl Clone for ReaderWrapper {
 }
 
 
+pub fn validate_output_path(p: &str) {
+    let path = Path::new(p);
+        if path.exists() {
+            error!("Output path already exists");
+            process::exit(1);
+        }
+        let _parent_dir = path.parent();
+        if _parent_dir.is_none() {
+            error!("Unable to parse directory from {}", p);
+            process::exit(1);
+        }
+        let parent_dir = _parent_dir.unwrap();
+        if (parent_dir.to_str().unwrap().len() > 0) & !parent_dir.exists() {
+            error!("Output directory {:?} does not exist", parent_dir);
+            process::exit(1);
+        }
+}
+
+
 pub fn check_inputs_exist(fasta_file: &str, vcf_file: &str, bam_file: &str, cell_barcodes: &str,
                           out_matrix_path: &str, out_ref_matrix_path: &str) {
     for path in [fasta_file, vcf_file, bam_file, cell_barcodes].iter() {
         if !Path::new(&path).exists() {
-            error!("File {} does not exist", path);
+            error!("Input file {} does not exist", path);
             process::exit(1);
         }
     }
 
     // check if output directories exist
-    for path in &[out_matrix_path, out_ref_matrix_path] {
-        let _dir = Path::new(path).parent();
-        if _dir.is_none() {
-            error!("Unable to parse directory from {}", path);
-            process::exit(1);
-        }
-        let dir = _dir.unwrap();
-        if (dir.to_str().unwrap().len() > 0) & !dir.exists() {
-            error!("Output directory {:?} does not exist", dir);
-            process::exit(1);
-        }
+    for p in &[out_matrix_path, out_ref_matrix_path] {
+        validate_output_path(&p);
     }
     
     // check for fasta and BAM/CRAM indices as well
@@ -544,15 +556,6 @@ pub fn evaluate_rec<'a>(rh: &RecHolder,
                         start: rh.rec.pos(), 
                         end: rh.rec.pos() + alleles[0].len() as u32 };
 
-    let mut fa = fasta::IndexedReader::from_file(&rh.fasta_file)?;
-    let (rref, alt) = construct_haplotypes(&mut fa, &locus, alleles[1], rh.padding);
-
-    let haps = VariantHaps {
-        locus: Locus { chrom: chr, start: locus.start, end: locus.end },
-        rref: &rref,
-        alt: &alt,
-    };
-
     // used for logging
     let locus_str = format!("{}:{}", locus.chrom, rh.rec.pos());
 
@@ -579,6 +582,21 @@ pub fn evaluate_rec<'a>(rh: &RecHolder,
         r.metrics.num_multiallelic_recs += 1;
         return Ok((rh.i, r));
     }
+    // sometimes deletions are represented with an empty ALT column
+    // the VCF library returns a alleles with len 1 here
+    let alt = match alleles.len() {
+        1 => Vec::new(),
+        _ => alleles[1].to_owned()
+    };
+
+    let mut fa = fasta::IndexedReader::from_file(&rh.fasta_file)?;
+    let (rref, alt) = construct_haplotypes(&mut fa, &locus, &alt, rh.padding);
+
+    let haps = VariantHaps {
+        locus: Locus { chrom: chr, start: locus.start, end: locus.end },
+        rref: &rref,
+        alt: &alt,
+    };
 
     // make sure our alt is sane; if it is not, bail before alignment and warn the user
     for c in alt.iter() {
@@ -805,7 +823,7 @@ pub fn construct_haplotypes(fa: &mut fasta::IndexedReader<File>,
             let (bytes, _) = read_locus(fa, &fetch_locus, 0, 0);
             bytes
         };
-
+        
         let mut alt_hap = Vec::new();
         alt_hap.extend(get_range(locus.start.saturating_sub(padding), locus.start));
         alt_hap.extend(alt);
