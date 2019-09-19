@@ -26,4 +26,3 @@ deploy:
     repo: 10XGenomics/vartrix
     branch: master
     tags: true
-    condition: "$TARGET = x86_64-apple-darwin"
