@@ -620,9 +620,13 @@ pub fn load_barcodes(filename: impl AsRef<Path>) -> Result<HashMap<Vec<u8>, u32>
 
     let mut bc_set = HashMap::new();
 
-    for (i, l) in reader.lines().enumerate() {
+    // Be robust to duplicated barcodes in input
+    for l in reader.lines() {
         let seq = l.context("error reading barcodes file")?.into_bytes();
-        bc_set.insert(seq, i as u32);
+        if !bc_set.contains_key(&seq) {
+            let i = bc_set.len() as u32;
+            bc_set.insert(seq, i);
+        }
     }
     let num_bcs = bc_set.len();
     if num_bcs == 0 {
