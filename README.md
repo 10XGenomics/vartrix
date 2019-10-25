@@ -172,9 +172,14 @@ row.names(gt_chr1_1624866) <- barcodes$V1
 colnames(gt_chr1_1624866) <- "chr1:1624866"
 
 # Make the encoding more readable
+# See documentation of the consensus scoring mode (`-s consensus`)
+# No reads detected
 gt_chr1_1624866$`chr1:1624866` <- str_replace(as.character(gt_chr1_1624866$`chr1:1624866`), "0", "No Call")
+# Only ref detected
 gt_chr1_1624866$`chr1:1624866` <- str_replace(as.character(gt_chr1_1624866$`chr1:1624866`), "1", "ref/ref")
+# Only alt detected
 gt_chr1_1624866$`chr1:1624866` <- str_replace(as.character(gt_chr1_1624866$`chr1:1624866`), "2", "alt/alt")
+# Both alleles detected
 gt_chr1_1624866$`chr1:1624866` <- str_replace(as.character(gt_chr1_1624866$`chr1:1624866`), "3", "alt/ref")
 ```
 
