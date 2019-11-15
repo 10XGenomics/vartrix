@@ -39,7 +39,8 @@ or
 to decompress it. This will produce a new directory containing the executable binary.  
 
 ## Compiling from source
-VarTrix is a standard Rust executable project, that works with stable Rust >=1.13.
+VarTrix is a standard Rust executable project, that works with stable Rust >=1.13. Building from source requires that clang and clang developer libraries
+are installed on your system. See [here](https://rust-lang.github.io/rust-bindgen/requirements.html) for details.
 
 If you need to compile from source, [install Rust](https://www.rust-lang.org/en-US/install.html), then type `cargo build --release` from within the directory containing the VarTrix source code. The executable will appear at `target/release/vartrix`. As usual it's important to use a release build to get good performance.
 
