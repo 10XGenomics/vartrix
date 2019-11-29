@@ -587,14 +587,14 @@ pub fn evaluate_rec<'a>(rh: &RecHolder,
     }
     // sometimes deletions are represented with an empty ALT column
     // the VCF library returns a alleles with len 1 here
-    let REF = alleles[0].to_owned()
-    let ALT = match alleles.len() {
+    let refbase = alleles[0].to_owned();
+    let altbase = match alleles.len() {
         1 => Vec::new(),
         _ => alleles[1].to_owned()
     };
 
     let mut fa = fasta::IndexedReader::from_file(&rh.fasta_file)?;
-    let (rref, alt) = construct_haplotypes(&mut fa, &locus, &REF, &ALT, rh.padding);
+    let (rref, alt) = construct_haplotypes(&mut fa, &locus, &refbase, &altbase, rh.padding);
 
     let haps = VariantHaps {
         locus: Locus { chrom: chr, start: locus.start, end: locus.end },
@@ -836,8 +836,8 @@ pub fn read_locus(fa: &mut fasta::IndexedReader<File>,
 #[inline(never)]
 pub fn construct_haplotypes(fa: &mut fasta::IndexedReader<File>,
                             locus: &Locus, 
-                            REF: &[u8],
-                            ALT: &[u8], 
+                            refbase: &[u8],
+                            altbase: &[u8], 
                             padding: u32) -> (Vec<u8>, Vec<u8>)
 {
     let chrom_len = chrom_len(&locus.chrom, fa).unwrap();
@@ -851,7 +851,7 @@ pub fn construct_haplotypes(fa: &mut fasta::IndexedReader<File>,
         
         let mut alt_hap = Vec::new();
         alt_hap.extend(get_range(locus.start.saturating_sub(padding), locus.start));
-        alt_hap.extend(ALT);
+        alt_hap.extend(altbase);
         alt_hap.extend(get_range(locus.end, min(locus.end + padding, chrom_len as u32)));
         alt_hap
     };
@@ -865,7 +865,7 @@ pub fn construct_haplotypes(fa: &mut fasta::IndexedReader<File>,
         
         let mut alt_hap = Vec::new();
         ref_hap.extend(get_range(locus.start.saturating_sub(padding), locus.start));
-        ref_hap.extend(REF);
+        ref_hap.extend(refbase);
         ref_hap.extend(get_range(locus.end, min(locus.end + padding, chrom_len as u32)));
         ref_hap
     };
