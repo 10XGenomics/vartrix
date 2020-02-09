@@ -1,12 +1,11 @@
 [package]
 name = "vartrix"
-version = "1.1.8"
+version = "1.1.9"
 authors = ["Ian Fiddes <ian.t.fiddes@gmail.com>", "Patrick Marks <patrick@10xgenomics.com>"]
 
 [dependencies]
-bio = ">=0.28"
-rust-htslib = ">=0.24"
-docopt = "*"
+bio = ">=0.29"
+rust-htslib = { git = "https://github.com/rust-bio/rust-htslib.git", rev = "37533bded4692a78cfe080378a09209b95dc3cca" }
 csv = "1"
 failure = "0.1.5"
 sprs = "*"

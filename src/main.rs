@@ -642,9 +642,10 @@ pub fn load_barcodes(filename: impl AsRef<Path>) -> Result<HashMap<Vec<u8>, u32>
 pub fn open_with_gz<P: AsRef<Path>>(p: P) -> Result<Box<dyn BufRead>, Error> {
     let r = File::open(p.as_ref())?;
 
-    let ext = p.as_ref().extension().unwrap();
+    let ext = p.as_ref().extension();
 
-    if ext == "gz" {
+    use std::ffi::OsStr;
+    if ext == Some(OsStr::new("gz")) {
         let gz = MultiGzDecoder::new(r);
         let buf_reader = BufReader::new(gz);
         Ok(Box::new(buf_reader))
