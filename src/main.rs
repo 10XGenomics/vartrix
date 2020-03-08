@@ -466,8 +466,9 @@ pub fn check_inputs_exist(fasta_file: &str, vcf_file: &str, bam_file: &str, cell
     match extension {
         "bam" => {
             let bai = bam_file.to_owned() + ".bai";
-            if !Path::new(&bai).exists() {
-                error!("BAM index {} does not exist", bai);
+            let csi = bam_file.to_owned() + ".csi";
+            if !Path::new(&bai).exists() && !Path::new(&csi).exists() {
+                error!("BAM index does not exist. Expecting {} or {}", bai, csi);
                 process::exit(1);
             }
         }
