@@ -8,33 +8,12 @@ on:
 
 jobs:
   rust:
-    runs-on: ubuntu-18.04
+    container:
+      image: docker.pkg.github.com/10xdev/toolchain-scripts/toolchain:latest
     steps:
       - name: Checkout git repository
         uses: actions/checkout@master
-      - name: Check Rust formatting
-        run: cargo fmt -- --check
-      - name: Cache cargo registry
-        uses: actions/cache@v1
-        with:
-          path: ~/.cargo/registry
-          key: ${{runner.os}}-cargo-registry-${{hashFiles('**/*.rs')}}
-          restore-keys: ${{runner.os}}-cargo-registry-
-      - name: Cache cargo git index
-        uses: actions/cache@v1
-        with:
-          path: ~/.cargo/git
-          key: ${{runner.os}}-cargo-git-${{hashFiles('**/*.rs')}}
-          restore-keys: ${{runner.os}}-cargo-git-
-      - name: Cache cargo build --release
-        uses: actions/cache@v1
-        with:
-          path: target
-          key: ${{runner.os}}-cargo-target-${{hashFiles('**/*.rs')}}
-          restore-keys: |
-            ${{runner.os}}-cargo-target-
-      - name: Remove the Cargo target directory
-        if: github.ref == 'refs/heads/master'
-        run: cargo clean
       - name: Run Rust tests
-        run: cargo test --release -- --nocapture
+        run: cargo build --release
+      - name: Check toolchain
+        run: readelf -V target/release/vartrix
