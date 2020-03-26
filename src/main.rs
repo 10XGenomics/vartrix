@@ -1,14 +1,14 @@
 extern crate bio;
-extern crate rust_htslib;
 extern crate clap;
 extern crate csv;
-extern crate itertools;
-extern crate sprs;
-extern crate rayon;
-extern crate terminal_size;
-extern crate tempfile;
-extern crate simplelog;
 extern crate flate2;
+extern crate itertools;
+extern crate rayon;
+extern crate rust_htslib;
+extern crate simplelog;
+extern crate sprs;
+extern crate tempfile;
+extern crate terminal_size;
 #[macro_use]
 extern crate log;
 #[macro_use]
@@ -16,28 +16,27 @@ extern crate failure;
 #[macro_use]
 extern crate human_panic;
 
-use simplelog::*;
-use itertools::Itertools;
-use std::cmp::{max, min};
-use std::collections::{HashMap, HashSet};
-use std::process;
-use clap::{Arg, App};
-use std::fs::File;
-use std::io::prelude::*;
-use bio::io::fasta;
 use bio::alignment::pairwise::banded;
-use rust_htslib::bam::{self, Read, Record};
-use rust_htslib::bam::record::Aux;
+use bio::io::fasta;
+use clap::{App, Arg};
 use failure::{Error, ResultExt};
-use std::path::Path;
-use std::io::{BufRead, BufReader};
+use flate2::read::MultiGzDecoder;
+use itertools::Itertools;
+use rayon::prelude::*;
+use rust_htslib::bam::record::Aux;
+use rust_htslib::bam::{self, Read, Record};
+use rust_htslib::bcf::{self, Read as BcfRead};
+use simplelog::*;
 use sprs::io::write_matrix_market;
 use sprs::TriMat;
-use rust_htslib::bcf::{self, Read as BcfRead};
-use rayon::prelude::*;
-use terminal_size::{Width, terminal_size};
-use flate2::read::MultiGzDecoder;
-
+use std::cmp::{max, min};
+use std::collections::{HashMap, HashSet};
+use std::fs::File;
+use std::io::prelude::*;
+use std::io::{BufRead, BufReader};
+use std::path::Path;
+use std::process;
+use terminal_size::{terminal_size, Width};
 
 const REF_VALUE: i8 = 1;
 const ALT_VALUE: i8 = 2;
@@ -45,12 +44,12 @@ const REF_ALT_VALUE: i8 = 3;
 const MIN_SCORE: i32 = 25;
 const UNKNOWN_VALUE: i8 = -1;
 const CONSENSUS_THRESHOLD: f64 = 0.75;
-const K: usize = 6;  // kmer match length
-const W: usize = 20;  // Window size for creating the band
-const MATCH: i32 = 1;  // Match score
+const K: usize = 6; // kmer match length
+const W: usize = 20; // Window size for creating the band
+const MATCH: i32 = 1; // Match score
 const MISMATCH: i32 = -5; // Mismatch score
 const GAP_OPEN: i32 = -5; // Gap open score
-const GAP_EXTEND: i32 = -1;  // Gap extend score
+const GAP_EXTEND: i32 = -1; // Gap extend score
 
 fn get_args() -> clap::App<'static, 'static> {
     let args = App::new("vartrix")
@@ -142,13 +141,12 @@ fn get_args() -> clap::App<'static, 'static> {
              .long("valid-chars")
              .default_value("ATGCatgc")
              .help("Valid characters in an alternative haplotype. This prevents non sequence-resolved variants from being genotyped."));
-        args
+    args
 }
-
 
 fn main() {
     std::env::set_var("RUST_BACKTRACE", "1");
-    setup_panic!();  // pretty panics for users
+    setup_panic!(); // pretty panics for users
     let mut cli_args = Vec::new();
     for arg in std::env::args_os() {
         cli_args.push(arg.into_string().unwrap());
@@ -156,7 +154,6 @@ fn main() {
     let res = _main(cli_args);
 
     if let Err(v) = res {
-
         let fail = v.as_fail();
         println!("Vartrix error. v{}.", env!("CARGO_PKG_VERSION"));
         println!("Error: {}", fail);
@@ -175,23 +172,32 @@ fn main() {
 // constructing a _main allows for us to run regression tests way more easily
 fn _main(cli_args: Vec<String>) -> Result<(), Error> {
     let args = get_args().get_matches_from(cli_args);
-    let fasta_file = args.value_of("fasta").expect("You must supply a fasta file");
+    let fasta_file = args
+        .value_of("fasta")
+        .expect("You must supply a fasta file");
     let vcf_file = args.value_of("vcf").expect("You must supply a VCF file");
     let bam_file = args.value_of("bam").expect("You must provide a BAM file");
-    let cell_barcodes = args.value_of("cell_barcodes").expect("You must provide a cell barcodes file");
+    let cell_barcodes = args
+        .value_of("cell_barcodes")
+        .expect("You must provide a cell barcodes file");
     let out_matrix_path = args.value_of("out_matrix").unwrap_or_default();
     let ref_matrix_path = args.value_of("ref_matrix").unwrap_or_default();
-    let padding = args.value_of("padding")
-                      .unwrap_or_default()
-                      .parse::<u32>()
-                      .expect("Failed to convert padding to integer");
+    let padding = args
+        .value_of("padding")
+        .unwrap_or_default()
+        .parse::<u32>()
+        .expect("Failed to convert padding to integer");
     let scoring_method = args.value_of("scoring_method").unwrap_or_default();
-    let threads = args.value_of("threads").unwrap_or_default()
-                                          .parse::<usize>()
-                                          .expect("Failed to convert threads to integer");
-    let mapq = args.value_of("mapq").unwrap_or_default()
-                                    .parse::<u8>()
-                                    .expect("Failed to convert mapq to integer");
+    let threads = args
+        .value_of("threads")
+        .unwrap_or_default()
+        .parse::<usize>()
+        .expect("Failed to convert threads to integer");
+    let mapq = args
+        .value_of("mapq")
+        .unwrap_or_default()
+        .parse::<u8>()
+        .expect("Failed to convert mapq to integer");
     let primary_only = args.is_present("primary_alignments");
     let duplicates = args.is_present("no_duplicates");
     let use_umi = args.is_present("umi");
@@ -203,12 +209,22 @@ fn _main(cli_args: Vec<String>) -> Result<(), Error> {
         "info" => LevelFilter::Info,
         "debug" => LevelFilter::Debug,
         "error" => LevelFilter::Error,
-        &_ => { println!("Log level not valid"); process::exit(1); }
+        &_ => {
+            println!("Log level not valid");
+            process::exit(1);
+        }
     };
 
     let _ = SimpleLogger::init(ll, Config::default());
 
-    check_inputs_exist(fasta_file, vcf_file, bam_file, cell_barcodes, out_matrix_path, ref_matrix_path);
+    check_inputs_exist(
+        fasta_file,
+        vcf_file,
+        bam_file,
+        cell_barcodes,
+        out_matrix_path,
+        ref_matrix_path,
+    );
 
     let cell_barcodes = load_barcodes(&cell_barcodes)?;
 
@@ -217,11 +233,13 @@ fn _main(cli_args: Vec<String>) -> Result<(), Error> {
     let mut recs = Vec::new();
     for (i, _rec) in rdr.records().enumerate() {
         let rec = _rec?;
-        let s = RecHolder { i: i,
-                            rec: rec, 
-                            fasta_file: &fasta_file, 
-                            padding: padding,
-                            cell_barcodes: &cell_barcodes};
+        let s = RecHolder {
+            i: i,
+            rec: rec,
+            fasta_file: &fasta_file,
+            padding: padding,
+            cell_barcodes: &cell_barcodes,
+        };
         recs.push(s);
     }
 
@@ -231,10 +249,13 @@ fn _main(cli_args: Vec<String>) -> Result<(), Error> {
         error!("Warning! Zero variants found in input VCF. Output matrices will be by definition empty but will still be generated.");
     }
 
-    info!("Initialized a {} variants x {} cell barcodes matrix", num_vars, cell_barcodes.len());
+    info!(
+        "Initialized a {} variants x {} cell barcodes matrix",
+        num_vars,
+        cell_barcodes.len()
+    );
     let mut matrix = TriMat::new((num_vars, cell_barcodes.len()));
     let mut ref_matrix = TriMat::new((num_vars, cell_barcodes.len()));
-
 
     let mut rec_chunks = Vec::new();
     let chunk_size = max(num_vars / threads, 1);
@@ -248,25 +269,36 @@ fn _main(cli_args: Vec<String>) -> Result<(), Error> {
 
     let rdr = ReaderWrapper {
         filename: bam_file.to_string(),
-        reader: bam::IndexedReader::from_path(&bam_file).context(format!("error opening bam file: {}", bam_file))?
+        reader: bam::IndexedReader::from_path(&bam_file)
+            .context(format!("error opening bam file: {}", bam_file))?,
     };
 
     let args_holder = Arguments {
-    primary: primary_only,
-    mapq: mapq,
-    duplicates: duplicates,
-    use_umi: use_umi,
-    bam_tag: bam_tag.to_string(),
-    valid_chars: String::from(valid_chars).into_bytes().iter().cloned().collect(),
+        primary: primary_only,
+        mapq: mapq,
+        duplicates: duplicates,
+        use_umi: use_umi,
+        bam_tag: bam_tag.to_string(),
+        valid_chars: String::from(valid_chars)
+            .into_bytes()
+            .iter()
+            .cloned()
+            .collect(),
     };
 
-    let pool = rayon::ThreadPoolBuilder::new().num_threads(threads).build().unwrap();
+    let pool = rayon::ThreadPoolBuilder::new()
+        .num_threads(threads)
+        .build()
+        .unwrap();
     debug!("Initialized a thread pool with {} threads", threads);
-    let results: Vec<_> = pool.install(|| rec_chunks.par_iter()
-                                    .map_with(rdr, |r, rec_chunk| { 
-                                        evaluate_chunk(rec_chunk, r, &args_holder).unwrap() 
-                                        } )
-                                    .collect());
+    let results: Vec<_> = pool.install(|| {
+        rec_chunks
+            .par_iter()
+            .map_with(rdr, |r, rec_chunk| {
+                evaluate_chunk(rec_chunk, r, &args_holder).unwrap()
+            })
+            .collect()
+    });
 
     debug!("Finished aligning reads for all variants");
 
@@ -299,52 +331,77 @@ fn _main(cli_args: Vec<String>) -> Result<(), Error> {
         for (i, scores) in v.iter() {
             add_metrics(&mut metrics, &scores.metrics);
             match scoring_method {
-                "alt_frac" => { 
-                    let result = alt_frac(&scores, *i, args_holder.use_umi); 
+                "alt_frac" => {
+                    let result = alt_frac(&scores, *i, args_holder.use_umi);
                     for (j, r) in result {
                         matrix.add_triplet(*i, j as usize, r);
                     }
-                },
-                "consensus" => { 
-                    let result = consensus_scoring(&scores, *i, args_holder.use_umi); 
+                }
+                "consensus" => {
+                    let result = consensus_scoring(&scores, *i, args_holder.use_umi);
                     for (j, r) in result {
                         matrix.add_triplet(*i, j as usize, r);
                     }
-                },
-                "coverage" => { 
-                    let result = coverage(&scores, *i, args_holder.use_umi); 
+                }
+                "coverage" => {
+                    let result = coverage(&scores, *i, args_holder.use_umi);
                     for (j, r) in result.0 {
                         matrix.add_triplet(*i, j as usize, r);
                     }
                     for (j, r) in result.1 {
                         ref_matrix.add_triplet(*i, j as usize, r);
                     }
-                },
-                &_ => { panic!("Scoring method is invalid") },
+                }
+                &_ => panic!("Scoring method is invalid"),
             };
         }
     }
     debug!("Finished scoring alignments for all variants");
     info!("Number of alignments evaluated: {}", metrics.num_reads);
-    info!("Number of alignments skipped due to low mapping quality: {}", metrics.num_low_mapq);
-    info!("Number of alignments skipped due to not being primary: {}", metrics.num_non_primary);
-    info!("Number of alignments skipped due to being duplicates: {}", metrics.num_duplicates);
-    info!("Number of alignments skipped due to not being associated with a cell barcode: {}", metrics.num_not_cell_bc);
-    info!("Number of alignments skipped due to not intersecting variant: {}", metrics.num_not_useful);
-    info!("Number of alignments skipped due to not having a UMI: {}", metrics.num_non_umi);
+    info!(
+        "Number of alignments skipped due to low mapping quality: {}",
+        metrics.num_low_mapq
+    );
+    info!(
+        "Number of alignments skipped due to not being primary: {}",
+        metrics.num_non_primary
+    );
+    info!(
+        "Number of alignments skipped due to being duplicates: {}",
+        metrics.num_duplicates
+    );
+    info!(
+        "Number of alignments skipped due to not being associated with a cell barcode: {}",
+        metrics.num_not_cell_bc
+    );
+    info!(
+        "Number of alignments skipped due to not intersecting variant: {}",
+        metrics.num_not_useful
+    );
+    info!(
+        "Number of alignments skipped due to not having a UMI: {}",
+        metrics.num_non_umi
+    );
     info!("Number of VCF records skipped due to having invalid characters in the alternative haplotype: {}",metrics.num_invalid_recs);
-    info!("Number of VCF records skipped due to being multi-allelic: {}", metrics.num_multiallelic_recs);
+    info!(
+        "Number of VCF records skipped due to being multi-allelic: {}",
+        metrics.num_multiallelic_recs
+    );
 
-    let _ = write_matrix_market(&out_matrix_path as &str, &matrix).context("Error writing out-matrix")?;
+    let _ = write_matrix_market(&out_matrix_path as &str, &matrix)
+        .context("Error writing out-matrix")?;
     debug!("Wrote out matrix file");
 
     if scoring_method == "coverage" && args.is_present("ref_matrix") {
-        let _ = write_matrix_market(&ref_matrix_path as &str, &ref_matrix).context("Error writing ref-matrix")?;
+        let _ = write_matrix_market(&ref_matrix_path as &str, &ref_matrix)
+            .context("Error writing ref-matrix")?;
         debug!("Wrote reference matrix file");
     }
 
     if args.is_present("out_variants") {
-        let out_variants = args.value_of("out_variants").expect("Out variants path flag set but no value");
+        let out_variants = args
+            .value_of("out_variants")
+            .expect("Out variants path flag set but no value");
         validate_output_path(&out_variants);
         write_variants(out_variants, vcf_file)?;
         debug!("Wrote variants file");
@@ -353,12 +410,13 @@ fn _main(cli_args: Vec<String>) -> Result<(), Error> {
     // warn the user if they may have made a mistake
     let sum = matrix.data().iter().fold(0.0, |a, &b| a + b);
     if sum == 0.0 {
-        error!("The resulting matrix has a sum of 0. Did you use the --umi flag on data without UMIs?")
+        error!(
+            "The resulting matrix has a sum of 0. Did you use the --umi flag on data without UMIs?"
+        )
     }
 
     Ok(())
 }
-
 
 pub struct Arguments {
     primary: bool,
@@ -369,7 +427,6 @@ pub struct Arguments {
     valid_chars: HashSet<u8>,
 }
 
-
 pub struct RecHolder<'a> {
     i: usize,
     rec: bcf::Record,
@@ -378,20 +435,17 @@ pub struct RecHolder<'a> {
     cell_barcodes: &'a HashMap<Vec<u8>, u32>,
 }
 
-
 pub struct Locus {
     pub chrom: String,
     pub start: u32,
     pub end: u32,
 }
 
-
 pub struct VariantHaps<'a> {
     locus: Locus,
     rref: &'a Vec<u8>,
     alt: &'a Vec<u8>,
 }
-
 
 pub struct Metrics {
     pub num_reads: usize,
@@ -405,44 +459,46 @@ pub struct Metrics {
     pub num_multiallelic_recs: usize,
 }
 
-
 pub struct ReaderWrapper {
-  filename: String,
-  reader: bam::IndexedReader
+    filename: String,
+    reader: bam::IndexedReader,
 }
-
 
 impl Clone for ReaderWrapper {
     fn clone(&self) -> ReaderWrapper {
         ReaderWrapper {
-             filename: self.filename.clone(),
-             reader: bam::IndexedReader::from_path(&self.filename).unwrap(),
+            filename: self.filename.clone(),
+            reader: bam::IndexedReader::from_path(&self.filename).unwrap(),
         }
     }
 }
 
-
 pub fn validate_output_path(p: &str) {
     let path = Path::new(p);
-        if path.exists() {
-            error!("Output path already exists");
-            process::exit(1);
-        }
-        let _parent_dir = path.parent();
-        if _parent_dir.is_none() {
-            error!("Unable to parse directory from {}", p);
-            process::exit(1);
-        }
-        let parent_dir = _parent_dir.unwrap();
-        if (parent_dir.to_str().unwrap().len() > 0) & !parent_dir.exists() {
-            error!("Output directory {:?} does not exist", parent_dir);
-            process::exit(1);
-        }
+    if path.exists() {
+        error!("Output path already exists");
+        process::exit(1);
+    }
+    let _parent_dir = path.parent();
+    if _parent_dir.is_none() {
+        error!("Unable to parse directory from {}", p);
+        process::exit(1);
+    }
+    let parent_dir = _parent_dir.unwrap();
+    if (parent_dir.to_str().unwrap().len() > 0) & !parent_dir.exists() {
+        error!("Output directory {:?} does not exist", parent_dir);
+        process::exit(1);
+    }
 }
 
-
-pub fn check_inputs_exist(fasta_file: &str, vcf_file: &str, bam_file: &str, cell_barcodes: &str,
-                          out_matrix_path: &str, out_ref_matrix_path: &str) {
+pub fn check_inputs_exist(
+    fasta_file: &str,
+    vcf_file: &str,
+    bam_file: &str,
+    cell_barcodes: &str,
+    out_matrix_path: &str,
+    out_ref_matrix_path: &str,
+) {
     for path in [fasta_file, vcf_file, bam_file, cell_barcodes].iter() {
         if !Path::new(&path).exists() {
             error!("Input file {} does not exist", path);
@@ -454,7 +510,7 @@ pub fn check_inputs_exist(fasta_file: &str, vcf_file: &str, bam_file: &str, cell
     for p in &[out_matrix_path, out_ref_matrix_path] {
         validate_output_path(&p);
     }
-    
+
     // check for fasta and BAM/CRAM indices as well
     let fai = fasta_file.to_owned() + ".fai";
     if !Path::new(&fai).exists() {
@@ -487,15 +543,18 @@ pub fn check_inputs_exist(fasta_file: &str, vcf_file: &str, bam_file: &str, cell
 }
 
 #[inline(never)]
-pub fn validate_inputs(recs: &std::vec::Vec<RecHolder<'_>>, bam_file: &str, fasta_file: &str) -> Result<(), Error> {
+pub fn validate_inputs(
+    recs: &std::vec::Vec<RecHolder<'_>>,
+    bam_file: &str,
+    fasta_file: &str,
+) -> Result<(), Error> {
     // generate a set of all chromosome names seen in the records and then make sure
     // that these can be found in the FASTA as well as the BAM
     debug!("Checking VCF records for chromosome names that match those in BAM and FASTA");
     let fai = fasta_file.to_owned() + ".fai";
     let mut fa_seqs = HashSet::new();
 
-    let fa_index_iter = 
-        fasta::Index::from_file(&fai)
+    let fa_index_iter = fasta::Index::from_file(&fai)
         .context(format!("error opening fasta index: {}", fai))?
         .sequences();
 
@@ -514,12 +573,12 @@ pub fn validate_inputs(recs: &std::vec::Vec<RecHolder<'_>>, bam_file: &str, fast
     let sizes = make_chrom_size_table(&fa);
 
     for rh in recs {
-        let chr = String::from_utf8(rh.rec.header().rid2name(rh.rec.rid().unwrap())?.to_vec()).unwrap();
+        let chr =
+            String::from_utf8(rh.rec.header().rid2name(rh.rec.rid().unwrap())?.to_vec()).unwrap();
         if !fa_seqs.contains(&chr) {
             error!("Sequence {} not seen in FASTA", chr);
             process::exit(1);
-        }
-        else if !bam_seqs.contains(&chr) {
+        } else if !bam_seqs.contains(&chr) {
             error!("Sequence {} not seen in BAM", chr);
             process::exit(1);
         }
@@ -535,10 +594,11 @@ pub fn validate_inputs(recs: &std::vec::Vec<RecHolder<'_>>, bam_file: &str, fast
     Ok(())
 }
 
-pub fn evaluate_chunk<'a>(chunk: &&[RecHolder<'_>],
-                        rdr: &mut ReaderWrapper,
-                        args: &Arguments) 
-                            -> Result<Vec<(usize, EvaluateAlnResults)>, Error> {
+pub fn evaluate_chunk<'a>(
+    chunk: &&[RecHolder<'_>],
+    rdr: &mut ReaderWrapper,
+    args: &Arguments,
+) -> Result<Vec<(usize, EvaluateAlnResults)>, Error> {
     let mut chunk_scores = Vec::new();
     for rh in chunk.iter() {
         let (i, scores) = evaluate_rec(rh, rdr, args)?;
@@ -548,17 +608,20 @@ pub fn evaluate_chunk<'a>(chunk: &&[RecHolder<'_>],
 }
 
 #[inline(never)]
-pub fn evaluate_rec<'a>(rh: &RecHolder,
-                        rdr: &mut ReaderWrapper,
-                        args: &Arguments) 
-                            -> Result<(usize, EvaluateAlnResults), Error> {
+pub fn evaluate_rec<'a>(
+    rh: &RecHolder,
+    rdr: &mut ReaderWrapper,
+    args: &Arguments,
+) -> Result<(usize, EvaluateAlnResults), Error> {
     let chr = String::from_utf8(rh.rec.header().rid2name(rh.rec.rid().unwrap())?.to_vec())?;
 
     let alleles = rh.rec.alleles();
- 
-    let locus = Locus { chrom: chr.to_string(), 
-                        start: rh.rec.pos(), 
-                        end: rh.rec.pos() + alleles[0].len() as u32 };
+
+    let locus = Locus {
+        chrom: chr.to_string(),
+        start: rh.rec.pos(),
+        end: rh.rec.pos() + alleles[0].len() as u32,
+    };
 
     // used for logging
     let locus_str = format!("{}:{}", locus.chrom, rh.rec.pos());
@@ -582,7 +645,10 @@ pub fn evaluate_rec<'a>(rh: &RecHolder,
 
     // if this is multi-allelic, ignore it
     if alleles.len() > 2 {
-        info!("Variant at {} is multi-allelic. It will be ignored.", locus_str);
+        info!(
+            "Variant at {} is multi-allelic. It will be ignored.",
+            locus_str
+        );
         r.metrics.num_multiallelic_recs += 1;
         return Ok((rh.i, r));
     }
@@ -590,14 +656,18 @@ pub fn evaluate_rec<'a>(rh: &RecHolder,
     // the VCF library returns a alleles with len 1 here
     let alt = match alleles.len() {
         1 => Vec::new(),
-        _ => alleles[1].to_owned()
+        _ => alleles[1].to_owned(),
     };
 
     let mut fa = fasta::IndexedReader::from_file(&rh.fasta_file)?;
     let (rref, alt) = construct_haplotypes(&mut fa, &locus, &alt, rh.padding);
 
     let haps = VariantHaps {
-        locus: Locus { chrom: chr, start: locus.start, end: locus.end },
+        locus: Locus {
+            chrom: chr,
+            start: locus.start,
+            end: locus.end,
+        },
         rref: &rref,
         alt: &alt,
     };
@@ -605,18 +675,29 @@ pub fn evaluate_rec<'a>(rh: &RecHolder,
     // make sure our alt is sane; if it is not, bail before alignment and warn the user
     for c in alt.iter() {
         if !args.valid_chars.contains(c) {
-            warn!("Variant at {} has invalid alternative characters. This record will be ignored.", locus_str);
+            warn!(
+                "Variant at {} has invalid alternative characters. This record will be ignored.",
+                locus_str
+            );
             r.metrics.num_invalid_recs += 1;
             return Ok((rh.i, r));
         }
     }
 
-    evaluate_alns(&mut rdr.reader, &haps, &rh.cell_barcodes, args, &mut r, &locus_str)?;
+    evaluate_alns(
+        &mut rdr.reader,
+        &haps,
+        &rh.cell_barcodes,
+        args,
+        &mut r,
+        &locus_str,
+    )?;
     Ok((rh.i, r))
 }
 
 pub fn load_barcodes(filename: impl AsRef<Path>) -> Result<HashMap<Vec<u8>, u32>, Error> {
-    let r = open_with_gz(filename.as_ref()).context(format!("error open barcodes file: {:?}", filename.as_ref()))?;
+    let r = open_with_gz(filename.as_ref())
+        .context(format!("error open barcodes file: {:?}", filename.as_ref()))?;
     let reader = BufReader::with_capacity(32 * 1024, r);
 
     let mut bc_set = HashMap::new();
@@ -638,7 +719,6 @@ pub fn load_barcodes(filename: impl AsRef<Path>) -> Result<HashMap<Vec<u8>, u32>
     Ok(bc_set)
 }
 
-
 /// Open a (possibly gzipped) file into a BufReader.
 pub fn open_with_gz<P: AsRef<Path>>(p: P) -> Result<Box<dyn BufRead>, Error> {
     let r = File::open(p.as_ref())?;
@@ -656,31 +736,29 @@ pub fn open_with_gz<P: AsRef<Path>>(p: P) -> Result<Box<dyn BufRead>, Error> {
     }
 }
 
-
-pub fn get_cell_barcode(rec: &Record, cell_barcodes: &HashMap<Vec<u8>, u32>, bam_tag: &String) -> Option<u32> {
+pub fn get_cell_barcode(
+    rec: &Record,
+    cell_barcodes: &HashMap<Vec<u8>, u32>,
+    bam_tag: &String,
+) -> Option<u32> {
     match rec.aux(bam_tag.as_bytes()) {
         Some(Aux::String(hp)) => {
             let cb = hp.to_vec();
             let cb_index = cell_barcodes.get(&cb);
             Some(*cb_index?)
-        },
+        }
         _ => None,
     }
 }
-
 
 pub fn get_umi(rec: &Record) -> Option<Vec<u8>> {
     match rec.aux(b"UB") {
-        Some(Aux::String(hp)) => {
-            Some(hp.to_vec())
-        },
+        Some(Aux::String(hp)) => Some(hp.to_vec()),
         _ => None,
     }
 }
 
-
 fn make_chrom_size_table(reader: &fasta::IndexedReader<File>) -> HashMap<String, u64> {
-
     let mut map = HashMap::new();
     for s in reader.index.sequences() {
         map.insert(s.name.clone(), s.len);
@@ -695,38 +773,45 @@ pub fn chrom_len(chrom: &str, fa: &mut fasta::IndexedReader<File>) -> Result<u64
             return Ok(s.len);
         }
     }
-    Err(format_err!("Requested chromosome {} was not found in fasta", chrom))
+    Err(format_err!(
+        "Requested chromosome {} was not found in fasta",
+        chrom
+    ))
 }
 
 pub fn chrom_len_fast(chrom: &str, chrom_sizes: &HashMap<String, u64>) -> Result<u64, Error> {
     match chrom_sizes.get(chrom) {
         Some(sz) => Ok(*sz),
-        None => Err(format_err!("Requested chromosome {} was not found in fasta", chrom))
+        None => Err(format_err!(
+            "Requested chromosome {} was not found in fasta",
+            chrom
+        )),
     }
 }
 
 pub fn useful_alignment(haps: &VariantHaps, rec: &bam::Record) -> Result<bool, Error> {
     // filter alignments to ensure that they truly overlap the region of interest
     // for now, overlap will be defined as having an aligned base anywhere in the locus
-        let cigar = rec.cigar();
-        for i in haps.locus.start..=haps.locus.end {
-            // Don't include soft-clips but do include deletions
-            let t = cigar.read_pos(i, false, true)?; 
-            if t.is_some() {
-                return Ok(true)
-            }
+    let cigar = rec.cigar();
+    for i in haps.locus.start..=haps.locus.end {
+        // Don't include soft-clips but do include deletions
+        let t = cigar.read_pos(i, false, true)?;
+        if t.is_some() {
+            return Ok(true);
         }
-        Ok(false)
+    }
+    Ok(false)
 }
 
 #[inline(never)]
-pub fn evaluate_alns(bam: &mut bam::IndexedReader, 
-                    haps: &VariantHaps, 
-                    cell_barcodes: &HashMap<Vec<u8>, u32>,
-                    args: &Arguments,
-                    r: &mut EvaluateAlnResults,
-                    locus_str: &String)
-                        -> Result<(), Error> {
+pub fn evaluate_alns(
+    bam: &mut bam::IndexedReader,
+    haps: &VariantHaps,
+    cell_barcodes: &HashMap<Vec<u8>, u32>,
+    args: &Arguments,
+    r: &mut EvaluateAlnResults,
+    locus_str: &String,
+) -> Result<(), Error> {
     // loop over all alignments in the region of interest
     // if the alignments are useful (aligned over this region)
     // perform Smith-Waterman against both haplotypes
@@ -742,62 +827,94 @@ pub fn evaluate_alns(bam: &mut bam::IndexedReader,
         r.metrics.num_reads += 1;
 
         if rec.mapq() < args.mapq {
-            debug!("{} skipping read {} due to low mapping quality", 
-                   locus_str, String::from_utf8(rec.qname().to_vec()).unwrap());
+            debug!(
+                "{} skipping read {} due to low mapping quality",
+                locus_str,
+                String::from_utf8(rec.qname().to_vec()).unwrap()
+            );
             r.metrics.num_low_mapq += 1;
             continue;
-        }
-        else if args.primary & (rec.is_secondary() | rec.is_supplementary()) {
-            debug!("{} skipping read {} due to not being the primary alignment", 
-                   locus_str, String::from_utf8(rec.qname().to_vec()).unwrap());
+        } else if args.primary & (rec.is_secondary() | rec.is_supplementary()) {
+            debug!(
+                "{} skipping read {} due to not being the primary alignment",
+                locus_str,
+                String::from_utf8(rec.qname().to_vec()).unwrap()
+            );
             r.metrics.num_non_primary += 1;
             continue;
-        }
-        else if args.duplicates & rec.is_duplicate() {
-            debug!("{} skipping read {} due to being a duplicate", 
-                   locus_str, String::from_utf8(rec.qname().to_vec()).unwrap());
-                r.metrics.num_duplicates += 1;
-            continue
-        }
-        else if useful_alignment(haps, &rec).unwrap() == false {
-            debug!("{} skipping read {} due to not being useful", 
-                   locus_str, String::from_utf8(rec.qname().to_vec()).unwrap());
+        } else if args.duplicates & rec.is_duplicate() {
+            debug!(
+                "{} skipping read {} due to being a duplicate",
+                locus_str,
+                String::from_utf8(rec.qname().to_vec()).unwrap()
+            );
+            r.metrics.num_duplicates += 1;
+            continue;
+        } else if useful_alignment(haps, &rec).unwrap() == false {
+            debug!(
+                "{} skipping read {} due to not being useful",
+                locus_str,
+                String::from_utf8(rec.qname().to_vec()).unwrap()
+            );
             r.metrics.num_not_useful += 1;
             continue;
         }
 
         let cell_index = get_cell_barcode(&rec, cell_barcodes, &args.bam_tag);
         if cell_index.is_none() {
-            debug!("{} skipping read {} due to not having a cell barcode",
-                    locus_str, String::from_utf8(rec.qname().to_vec()).unwrap());
+            debug!(
+                "{} skipping read {} due to not having a cell barcode",
+                locus_str,
+                String::from_utf8(rec.qname().to_vec()).unwrap()
+            );
             r.metrics.num_not_cell_bc += 1;
             continue;
         }
         let cell_index = cell_index.unwrap();
-        
+
         let _umi = get_umi(&rec);
         if (args.use_umi == true) & _umi.is_none() {
-            debug!("{} skipping read {} due to not having a UMI",
-                    locus_str, String::from_utf8(rec.qname().to_vec()).unwrap());
+            debug!(
+                "{} skipping read {} due to not having a UMI",
+                locus_str,
+                String::from_utf8(rec.qname().to_vec()).unwrap()
+            );
             r.metrics.num_non_umi += 1;
             continue;
         }
         // if no UMIs in this dataset, just plug in dummy UMI
-        let umi = if args.use_umi == false {vec![1 as u8]} else {_umi.unwrap()};
+        let umi = if args.use_umi == false {
+            vec![1 as u8]
+        } else {
+            _umi.unwrap()
+        };
 
         let seq = &rec.seq().as_bytes();
 
-        let score = |a: u8, b: u8| if a == b {MATCH} else {MISMATCH};
+        let score = |a: u8, b: u8| if a == b { MATCH } else { MISMATCH };
         let mut aligner = banded::Aligner::new(GAP_OPEN, GAP_EXTEND, score, K, W);
         let ref_alignment = aligner.local(seq, &haps.rref);
         let alt_alignment = aligner.local(seq, &haps.alt);
 
-        debug!("{} {} ref_aln:\n{}", locus_str, String::from_utf8(rec.qname().to_vec()).unwrap(),
-                ref_alignment.pretty(seq, &haps.rref));
-        debug!("{} {} alt_aln:\n{}", locus_str, String::from_utf8(rec.qname().to_vec()).unwrap(),
-                alt_alignment.pretty(seq, &haps.alt));
-        debug!("{} {} ref_score: {} alt_score: {}", locus_str, String::from_utf8(rec.qname().to_vec()).unwrap(),
-                ref_alignment.score, alt_alignment.score);
+        debug!(
+            "{} {} ref_aln:\n{}",
+            locus_str,
+            String::from_utf8(rec.qname().to_vec()).unwrap(),
+            ref_alignment.pretty(seq, &haps.rref)
+        );
+        debug!(
+            "{} {} alt_aln:\n{}",
+            locus_str,
+            String::from_utf8(rec.qname().to_vec()).unwrap(),
+            alt_alignment.pretty(seq, &haps.alt)
+        );
+        debug!(
+            "{} {} ref_score: {} alt_score: {}",
+            locus_str,
+            String::from_utf8(rec.qname().to_vec()).unwrap(),
+            ref_alignment.score,
+            alt_alignment.score
+        );
 
         let s = Scores {
             cell_index: cell_index,
@@ -812,16 +929,19 @@ pub fn evaluate_alns(bam: &mut bam::IndexedReader,
     Ok(())
 }
 
-
-pub fn read_locus(fa: &mut fasta::IndexedReader<File>,
-                  loc: &Locus,
-                  pad_left: u32,
-                  pad_right: u32)
-                  -> (Vec<u8>, usize) {
+pub fn read_locus(
+    fa: &mut fasta::IndexedReader<File>,
+    loc: &Locus,
+    pad_left: u32,
+    pad_right: u32,
+) -> (Vec<u8>, usize) {
     let mut seq = Vec::new();
 
     let new_start = max(0, loc.start as i32 - pad_left as i32) as u64;
-    let new_end = u64::from(min(loc.end + pad_right, chrom_len(&loc.chrom, fa).unwrap() as u32));
+    let new_end = u64::from(min(
+        loc.end + pad_right,
+        chrom_len(&loc.chrom, fa).unwrap() as u32,
+    ));
 
     fa.fetch(&loc.chrom, new_start, new_end).unwrap();
     fa.read(&mut seq).unwrap();
@@ -832,37 +952,48 @@ pub fn read_locus(fa: &mut fasta::IndexedReader<File>,
     (new_slc.into_iter().collect(), new_start as usize)
 }
 
-
 // Get padded ref and alt haplotypes around the variant. Locus must cover the REF bases of the VCF variant.
 #[inline(never)]
-pub fn construct_haplotypes(fa: &mut fasta::IndexedReader<File>,
-                            locus: &Locus, 
-                            alt: &[u8], 
-                            padding: u32) -> (Vec<u8>, Vec<u8>)
-{
+pub fn construct_haplotypes(
+    fa: &mut fasta::IndexedReader<File>,
+    locus: &Locus,
+    alt: &[u8],
+    padding: u32,
+) -> (Vec<u8>, Vec<u8>) {
     let chrom_len = chrom_len(&locus.chrom, fa).unwrap();
 
     let alt_hap = {
-        let mut get_range = |s,e| {
-            let fetch_locus = Locus { chrom: locus.chrom.clone(), start: s, end: e };
+        let mut get_range = |s, e| {
+            let fetch_locus = Locus {
+                chrom: locus.chrom.clone(),
+                start: s,
+                end: e,
+            };
             let (bytes, _) = read_locus(fa, &fetch_locus, 0, 0);
             bytes
         };
-        
+
         let mut alt_hap = Vec::new();
         alt_hap.extend(get_range(locus.start.saturating_sub(padding), locus.start));
         alt_hap.extend(alt);
-        alt_hap.extend(get_range(locus.end, min(locus.end + padding, chrom_len as u32)));
+        alt_hap.extend(get_range(
+            locus.end,
+            min(locus.end + padding, chrom_len as u32),
+        ));
         alt_hap
     };
 
     let (ref_hap, _) = read_locus(fa, locus, padding, padding);
-    debug!("{}:{}-{} -- ref: {} alt: {}", locus.chrom, locus.start, locus.end, 
-                                          String::from_utf8(ref_hap.clone()).unwrap(), 
-                                          String::from_utf8(alt_hap.clone()).unwrap());
+    debug!(
+        "{}:{}-{} -- ref: {} alt: {}",
+        locus.chrom,
+        locus.start,
+        locus.end,
+        String::from_utf8(ref_hap.clone()).unwrap(),
+        String::from_utf8(alt_hap.clone()).unwrap()
+    );
     (ref_hap, alt_hap)
 }
-
 
 pub struct Scores {
     pub cell_index: u32,
@@ -871,18 +1002,15 @@ pub struct Scores {
     pub alt_score: i32,
 }
 
-
 pub struct EvaluateAlnResults {
     pub metrics: Metrics,
     pub scores: Vec<Scores>,
 }
 
-
 pub struct CellCalls {
     cell_index: u32,
     calls: Vec<i8>,
 }
-
 
 pub struct CellCounts {
     pub ref_count: usize,
@@ -890,21 +1018,18 @@ pub struct CellCounts {
     pub unk_count: usize,
 }
 
-
 fn evaluate_scores(ref_score: i32, alt_score: i32) -> Option<i8> {
     if (ref_score < MIN_SCORE) & (alt_score < MIN_SCORE) {
-        return None
-    }
-    else if ref_score > alt_score {
+        return None;
+    } else if ref_score > alt_score {
         return Some(REF_VALUE);
     } else if alt_score > ref_score {
         return Some(ALT_VALUE);
-    }
-    else { // ref_score == alt_score
+    } else {
+        // ref_score == alt_score
         return Some(UNKNOWN_VALUE);
     }
 }
-
 
 pub fn convert_to_counts(r: Vec<i8>) -> CellCounts {
     let c = CellCounts {
@@ -914,7 +1039,6 @@ pub fn convert_to_counts(r: Vec<i8>) -> CellCounts {
     };
     c
 }
-
 
 fn parse_scores(scores: &Vec<Scores>, umi: bool) -> Vec<CellCalls> {
     // parse the score vector into collapsed calls
@@ -928,31 +1052,43 @@ fn parse_scores(scores: &Vec<Scores>, umi: bool) -> Vec<CellCalls> {
                 if eval.is_none() {
                     continue;
                 }
-                parsed_scores.entry(&score.umi).or_insert(Vec::new()).push(eval.unwrap());
+                parsed_scores
+                    .entry(&score.umi)
+                    .or_insert(Vec::new())
+                    .push(eval.unwrap());
             }
             // collapse each UMI into a consensus value
             let mut collapsed_scores = Vec::new();
             for (_umi, v) in parsed_scores.into_iter() {
                 let counts = convert_to_counts(v);
-                debug!("cell_index {} / UMI {} saw counts ref: {} alt: {} unk: {}", &cell_index, String::from_utf8(_umi.clone()).unwrap(), counts.ref_count, counts.alt_count, counts.unk_count);
-                let ref_frac = counts.ref_count as f64 / (counts.alt_count as f64 + counts.ref_count as f64 + counts.unk_count as f64);
-                let alt_frac = counts.alt_count as f64 / (counts.alt_count as f64 + counts.ref_count as f64 + counts.unk_count as f64);
-                if (ref_frac < CONSENSUS_THRESHOLD) & (alt_frac < CONSENSUS_THRESHOLD) { 
+                debug!(
+                    "cell_index {} / UMI {} saw counts ref: {} alt: {} unk: {}",
+                    &cell_index,
+                    String::from_utf8(_umi.clone()).unwrap(),
+                    counts.ref_count,
+                    counts.alt_count,
+                    counts.unk_count
+                );
+                let ref_frac = counts.ref_count as f64
+                    / (counts.alt_count as f64 + counts.ref_count as f64 + counts.unk_count as f64);
+                let alt_frac = counts.alt_count as f64
+                    / (counts.alt_count as f64 + counts.ref_count as f64 + counts.unk_count as f64);
+                if (ref_frac < CONSENSUS_THRESHOLD) & (alt_frac < CONSENSUS_THRESHOLD) {
                     collapsed_scores.push(UNKNOWN_VALUE);
-                }
-                else if alt_frac >= CONSENSUS_THRESHOLD {
+                } else if alt_frac >= CONSENSUS_THRESHOLD {
                     collapsed_scores.push(ALT_VALUE);
-                }
-                else {
+                } else {
                     assert!(ref_frac >= CONSENSUS_THRESHOLD);
                     collapsed_scores.push(REF_VALUE);
                 }
             }
             debug!("cell index {} saw calls {:?}", cell_index, collapsed_scores);
-            let counts = CellCalls {cell_index: cell_index, calls: collapsed_scores};
+            let counts = CellCalls {
+                cell_index: cell_index,
+                calls: collapsed_scores,
+            };
             r.push(counts);
-        }
-        else {
+        } else {
             let mut scores = Vec::new();
             for score in cell_scores.into_iter() {
                 let _eval = evaluate_scores(score.ref_score, score.alt_score);
@@ -963,14 +1099,16 @@ fn parse_scores(scores: &Vec<Scores>, umi: bool) -> Vec<CellCalls> {
                 scores.push(eval);
             }
             debug!("cell index {} saw calls {:?}", cell_index, scores);
-            let counts = CellCalls {cell_index: cell_index, calls: scores};
+            let counts = CellCalls {
+                cell_index: cell_index,
+                calls: scores,
+            };
             // map of CB to Score objects. This is basically trivial in the non-UMI case
             r.push(counts);
         }
     }
     r
 }
-
 
 pub fn consensus_scoring(results: &EvaluateAlnResults, i: usize, umi: bool) -> Vec<(u32, f64)> {
     let parsed_scores = parse_scores(&results.scores, umi);
@@ -980,20 +1118,17 @@ pub fn consensus_scoring(results: &EvaluateAlnResults, i: usize, umi: bool) -> V
         if counts.unk_count > 1 {
             info!("Variant at index {} has multiple unknown reads at barcode index {}. Check this locus manually", i, s.cell_index);
         }
-        
+
         if (counts.ref_count > 0) & (counts.alt_count > 0) {
             result.push((s.cell_index, REF_ALT_VALUE as f64));
-        }
-        else if counts.alt_count > 0 {
+        } else if counts.alt_count > 0 {
             result.push((s.cell_index, ALT_VALUE as f64));
-        }
-        else if counts.ref_count > 0 {
+        } else if counts.ref_count > 0 {
             result.push((s.cell_index, REF_VALUE as f64));
         }
     }
     result
 }
-
 
 pub fn alt_frac(results: &EvaluateAlnResults, i: usize, umi: bool) -> Vec<(u32, f64)> {
     let parsed_scores = parse_scores(&results.scores, umi);
@@ -1003,17 +1138,19 @@ pub fn alt_frac(results: &EvaluateAlnResults, i: usize, umi: bool) -> Vec<(u32, 
         if counts.unk_count > 1 {
             info!("Variant at index {} has multiple unknown reads at barcode index {}. Check this locus manually", i, s.cell_index);
         }
-        
-        let alt_frac = counts.alt_count as f64 / (counts.ref_count as f64 + 
-                                                  counts.alt_count as f64 + 
-                                                  counts.unk_count as f64);
+
+        let alt_frac = counts.alt_count as f64
+            / (counts.ref_count as f64 + counts.alt_count as f64 + counts.unk_count as f64);
         result.push((s.cell_index, alt_frac));
     }
     result
 }
 
-
-pub fn coverage(results: &EvaluateAlnResults, i: usize, umi: bool) -> (Vec<(u32, f64)>, Vec<(u32, f64)>) {
+pub fn coverage(
+    results: &EvaluateAlnResults,
+    i: usize,
+    umi: bool,
+) -> (Vec<(u32, f64)>, Vec<(u32, f64)>) {
     let parsed_scores = parse_scores(&results.scores, umi);
     let mut result = (Vec::new(), Vec::new());
     for s in parsed_scores.into_iter() {
@@ -1021,13 +1158,12 @@ pub fn coverage(results: &EvaluateAlnResults, i: usize, umi: bool) -> (Vec<(u32,
         if counts.unk_count > 1 {
             info!("Variant at index {} has multiple unknown reads at barcode index {}. Check this locus manually", i, s.cell_index);
         }
-        
+
         result.0.push((s.cell_index, counts.alt_count as f64));
         result.1.push((s.cell_index, counts.ref_count as f64));
     }
     result
 }
-
 
 pub fn write_variants(out_variants: &str, vcf_file: &str) -> Result<(), Error> {
     // write the variants to a TSV file for easy loading into Seraut
@@ -1044,12 +1180,11 @@ pub fn write_variants(out_variants: &str, vcf_file: &str) -> Result<(), Error> {
     Ok(())
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::tempdir;
     use sprs::io::read_matrix_market;
+    use tempfile::tempdir;
     // the idea here is to perform regression testing by running the full main() function
     // against the pre-evaluated test dataset. I have previously validated the output matrix
     // in all of the standard operating modes. I have stored these matrices in the test/ folder
@@ -1061,9 +1196,19 @@ mod tests {
         let tmp_dir = tempdir().unwrap();
         let out_file = tmp_dir.path().join("result.mtx");
         let out_file = out_file.to_str().unwrap();
-        for l in &["vartrix", "-v", "test/test.vcf", "-b", "test/test.bam",
-                   "-f", "test/test.fa", "-c", "test/barcodes.tsv",
-                   "-o", out_file] {
+        for l in &[
+            "vartrix",
+            "-v",
+            "test/test.vcf",
+            "-b",
+            "test/test.bam",
+            "-f",
+            "test/test.fa",
+            "-c",
+            "test/barcodes.tsv",
+            "-o",
+            out_file,
+        ] {
             cmds.push(l.to_string());
         }
         _main(cmds).unwrap();
@@ -1079,9 +1224,21 @@ mod tests {
         let tmp_dir = tempdir().unwrap();
         let out_file = tmp_dir.path().join("result.mtx");
         let out_file = out_file.to_str().unwrap();
-        for l in &["vartrix", "-v", "test/test.vcf", "-b", "test/test.bam",
-                   "-f", "test/test.fa", "-c", "test/barcodes.tsv",
-                   "-o", out_file, "-s", "alt_frac"] {
+        for l in &[
+            "vartrix",
+            "-v",
+            "test/test.vcf",
+            "-b",
+            "test/test.bam",
+            "-f",
+            "test/test.fa",
+            "-c",
+            "test/barcodes.tsv",
+            "-o",
+            out_file,
+            "-s",
+            "alt_frac",
+        ] {
             cmds.push(l.to_string());
         }
         _main(cmds).unwrap();
@@ -1099,9 +1256,23 @@ mod tests {
         let out_file = out_file.to_str().unwrap();
         let out_ref = tmp_dir.path().join("result_ref.mtx");
         let out_ref = out_ref.to_str().unwrap();
-        for l in &["vartrix", "-v", "test/test.vcf", "-b", "test/test.bam",
-                   "-f", "test/test.fa", "-c", "test/barcodes.tsv",
-                   "-o", out_file, "-s", "coverage", "--ref-matrix", out_ref] {
+        for l in &[
+            "vartrix",
+            "-v",
+            "test/test.vcf",
+            "-b",
+            "test/test.bam",
+            "-f",
+            "test/test.fa",
+            "-c",
+            "test/barcodes.tsv",
+            "-o",
+            out_file,
+            "-s",
+            "coverage",
+            "--ref-matrix",
+            out_ref,
+        ] {
             cmds.push(l.to_string());
         }
         _main(cmds).unwrap();
@@ -1122,9 +1293,24 @@ mod tests {
         let out_file = out_file.to_str().unwrap();
         let out_ref = tmp_dir.path().join("result_ref.mtx");
         let out_ref = out_ref.to_str().unwrap();
-        for l in &["vartrix", "-v", "test/test.vcf", "-b", "test/test.bam",
-                   "-f", "test/test.fa", "-c", "test/barcodes.tsv", "--umi",
-                   "-o", out_file, "-s", "coverage", "--ref-matrix", out_ref] {
+        for l in &[
+            "vartrix",
+            "-v",
+            "test/test.vcf",
+            "-b",
+            "test/test.bam",
+            "-f",
+            "test/test.fa",
+            "-c",
+            "test/barcodes.tsv",
+            "--umi",
+            "-o",
+            out_file,
+            "-s",
+            "coverage",
+            "--ref-matrix",
+            out_ref,
+        ] {
             cmds.push(l.to_string());
         }
         _main(cmds).unwrap();
@@ -1133,7 +1319,8 @@ mod tests {
         let expected_mat: TriMat<usize> = read_matrix_market("test/test_coverage_umi.mtx").unwrap();
         assert_eq!(seen_mat.to_csr(), expected_mat.to_csr());
         let seen_mat: TriMat<usize> = read_matrix_market(out_ref).unwrap();
-        let expected_mat: TriMat<usize> = read_matrix_market("test/test_coverage_ref_umi.mtx").unwrap();
+        let expected_mat: TriMat<usize> =
+            read_matrix_market("test/test_coverage_ref_umi.mtx").unwrap();
         assert_eq!(seen_mat.to_csr(), expected_mat.to_csr());
     }
 
@@ -1145,9 +1332,24 @@ mod tests {
         let out_file = out_file.to_str().unwrap();
         let out_ref = tmp_dir.path().join("result_ref.mtx");
         let out_ref = out_ref.to_str().unwrap();
-        for l in &["vartrix", "-v", "test/test.vcf", "-b", "test/test.bam",
-                   "-f", "test/test.fa", "-c", "test/barcodes.tsv.gz", "--umi",
-                   "-o", out_file, "-s", "coverage", "--ref-matrix", out_ref] {
+        for l in &[
+            "vartrix",
+            "-v",
+            "test/test.vcf",
+            "-b",
+            "test/test.bam",
+            "-f",
+            "test/test.fa",
+            "-c",
+            "test/barcodes.tsv.gz",
+            "--umi",
+            "-o",
+            out_file,
+            "-s",
+            "coverage",
+            "--ref-matrix",
+            out_ref,
+        ] {
             cmds.push(l.to_string());
         }
         _main(cmds).unwrap();
@@ -1156,7 +1358,8 @@ mod tests {
         let expected_mat: TriMat<usize> = read_matrix_market("test/test_coverage_umi.mtx").unwrap();
         assert_eq!(seen_mat.to_csr(), expected_mat.to_csr());
         let seen_mat: TriMat<usize> = read_matrix_market(out_ref).unwrap();
-        let expected_mat: TriMat<usize> = read_matrix_market("test/test_coverage_ref_umi.mtx").unwrap();
+        let expected_mat: TriMat<usize> =
+            read_matrix_market("test/test_coverage_ref_umi.mtx").unwrap();
         assert_eq!(seen_mat.to_csr(), expected_mat.to_csr());
     }
 
@@ -1169,9 +1372,24 @@ mod tests {
         let out_file = out_file.to_str().unwrap();
         let out_ref = tmp_dir.path().join("result_ref.mtx");
         let out_ref = out_ref.to_str().unwrap();
-        for l in &["vartrix", "-v", "test/test_dna.vcf", "-b", "test/test_dna.bam",
-                   "-f", "test/test_dna.fa", "-c", "test/dna_barcodes.tsv", "--umi",
-                   "-o", out_file, "-s", "coverage", "--ref-matrix", out_ref] {
+        for l in &[
+            "vartrix",
+            "-v",
+            "test/test_dna.vcf",
+            "-b",
+            "test/test_dna.bam",
+            "-f",
+            "test/test_dna.fa",
+            "-c",
+            "test/dna_barcodes.tsv",
+            "--umi",
+            "-o",
+            out_file,
+            "-s",
+            "coverage",
+            "--ref-matrix",
+            out_ref,
+        ] {
             cmds.push(l.to_string());
         }
         _main(cmds).unwrap();
@@ -1192,9 +1410,23 @@ mod tests {
         let out_file = out_file.to_str().unwrap();
         let out_ref = tmp_dir.path().join("result_ref.mtx");
         let out_ref = out_ref.to_str().unwrap();
-        for l in &["vartrix", "-v", "test/test_dna.vcf", "-b", "test/test_dna.bam",
-                   "-f", "test/test_dna.fa", "-c", "test/dna_barcodes.tsv",
-                   "-o", out_file, "-s", "coverage", "--ref-matrix", out_ref] {
+        for l in &[
+            "vartrix",
+            "-v",
+            "test/test_dna.vcf",
+            "-b",
+            "test/test_dna.bam",
+            "-f",
+            "test/test_dna.fa",
+            "-c",
+            "test/dna_barcodes.tsv",
+            "-o",
+            out_file,
+            "-s",
+            "coverage",
+            "--ref-matrix",
+            out_ref,
+        ] {
             cmds.push(l.to_string());
         }
         _main(cmds).unwrap();
@@ -1206,5 +1438,4 @@ mod tests {
         let expected_mat: TriMat<usize> = read_matrix_market("test/test_dna_ref.mtx").unwrap();
         assert_eq!(seen_mat.to_csr(), expected_mat.to_csr());
     }
-
 }
