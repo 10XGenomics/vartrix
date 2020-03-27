@@ -15,11 +15,11 @@ jobs:
       - name: Login to GitHub Package Registry
         run: docker login docker.pkg.github.com -u 10xbuild -p ${{secrets.GITHUB_TOKEN}}
       - name: Run Rust tests
-        uses: docker://docker.pkg.github.com/10xdev/toolchain-scripts/toolchain:latest
-        with:
-          args: |
-            source /mnt/build/toolchains/versions/latest/sourceme.sh
-            set -eux
-            cargo build --release
-            cargo run --release -- --help
-            readelf -V target/release/vartrix
+        run: >
+          docker run -v ${{github.workspace}}:/root
+          docker.pkg.github.com/10xdev/toolchain-scripts/toolchain:latest
+          /bin/bash -lec '
+          cargo build --release;
+          target/release/vartrix --help;
+          readelf -V target/release/vartrix;
+          '
