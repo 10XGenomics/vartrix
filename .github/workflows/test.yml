@@ -9,12 +9,17 @@ on:
 jobs:
   rust:
     runs-on: ubuntu-18.04
-    container:
-      image: docker.pkg.github.com/10xdev/toolchain-scripts/toolchain:latest
     steps:
       - name: Checkout git repository
         uses: actions/checkout@master
+      - name: Login to GitHub Package Registry
+        run: docker login docker.pkg.github.com -u 10xbuild -p ${{secrets.GITHUB_TOKEN}}
       - name: Run Rust tests
-        run: cargo build --release
-      - name: Check toolchain
-        run: readelf -V target/release/vartrix
+        uses: docker://docker.pkg.github.com/10xdev/toolchain-scripts/toolchain:latest
+        with:
+          args: |
+            source /mnt/build/toolchains/versions/latest/sourceme.sh
+            set -eux
+            cargo build --release
+            cargo run --release -- --help
+            readelf -V target/release/vartrix
