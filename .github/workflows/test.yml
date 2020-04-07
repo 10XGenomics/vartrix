@@ -13,7 +13,7 @@ jobs:
       - name: Checkout git repository
         uses: actions/checkout@master
       - name: Login to GitHub Package Registry
-        run: docker login docker.pkg.github.com -u 10xbuild -p ${{secrets.GITHUB_TOKEN}}
+        run: docker login docker.pkg.github.com -u 10xbuild -p ${{secrets.GH_PAT}}
       - name: Run Rust tests
         run: >
           docker run -v ${{github.workspace}}:/root
