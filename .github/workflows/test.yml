@@ -19,6 +19,7 @@ jobs:
           docker run -v ${{github.workspace}}:/root
           docker.pkg.github.com/10xdev/toolchain-scripts/toolchain:latest
           /bin/bash -lec '
+          apt-get update && apt-get install -y --no-install-recommends ca-certificates;
           cargo build --release;
           target/release/vartrix --help;
           readelf -V target/release/vartrix;
