@@ -23,4 +23,11 @@ jobs:
           cargo build --release;
           target/release/vartrix --help;
           readelf -V target/release/vartrix;
-          '
+          ';
+          mkdir ${{runner.temp}}/artifacts;
+          cp -a target/release/vartrix ${{runner.temp}}/artifacts/
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v1
+        with:
+          name: vartrix
+          path: ${{runner.temp}}/artifacts
