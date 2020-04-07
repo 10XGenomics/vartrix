@@ -6,8 +6,11 @@ on:
     branches:
       - master
 
+env:
+  CARGO_INCREMENTAL: 0
+
 jobs:
-  rust:
+  linux:
     runs-on: ubuntu-18.04
     steps:
       - name: Checkout git repository
@@ -21,11 +24,29 @@ jobs:
           /bin/bash -lec '
           apt-get update && apt-get install -y --no-install-recommends ca-certificates;
           cargo build --release;
-          target/release/vartrix --help;
+          target/release/vartrix --help | grep -q USAGE;
           readelf -V target/release/vartrix;
           ';
           mkdir ${{runner.temp}}/artifacts;
-          cp -a target/release/vartrix ${{runner.temp}}/artifacts/
+          cp -a target/release/vartrix ${{runner.temp}}/artifacts/vartrix-linux
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v1
+        with:
+          name: vartrix
+          path: ${{runner.temp}}/artifacts
+  macos:
+    runs-on: macos-latest
+    env:
+      MACOSX_DEPLOYMENT_TARGET: 10.7
+    steps:
+      - name: Checkout git repository
+        uses: actions/checkout@master
+      - name: Run Rust tests
+        run: |
+          cargo build --release
+          target/release/vartrix --help | grep -q USAGE
+          mkdir ${{runner.temp}}/artifacts
+          cp -a target/release/vartrix ${{runner.temp}}/artifacts/vartrix-macos
       - name: Upload build artifact
         uses: actions/upload-artifact@v1
         with:
