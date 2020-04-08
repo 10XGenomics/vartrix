@@ -4,21 +4,66 @@ on:
     tags:
     - 'v*' # Push events to matching v*, i.e. v1.0, v20.15.10
 
-name: Upload Release Build
+name: Build and Upload Release 
+
+env:
+  CARGO_INCREMENTAL: 0
 
 jobs:
-  build:
-    name: Upload Release Build
-    runs-on: ubuntu-16.04
+
+  linux:
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout git repository
         uses: actions/checkout@master
+      - name: Login to GitHub Package Registry
+        run: docker login docker.pkg.github.com -u 10xbuild -p ${{secrets.GH_PAT}}
+      - name: Run Rust tests
+        run: >
+          docker run -v ${{github.workspace}}:/root
+          docker.pkg.github.com/10xdev/toolchain-scripts/toolchain:latest
+          /bin/bash -lec '
+          apt-get update && apt-get install -y --no-install-recommends ca-certificates;
+          cargo build --release;
+          target/release/vartrix --help | grep -q USAGE;
+          readelf -V target/release/vartrix;
+          ';
+          mkdir ${{runner.temp}}/artifacts;
+          cp -a target/release/vartrix ${{runner.temp}}/artifacts/vartrix-linux
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v1
+        with:
+          name: vartrix
+          path: ${{runner.temp}}/artifacts
+  macos:
+    runs-on: macos-latest
+    env:
+      MACOSX_DEPLOYMENT_TARGET: 10.7
+    steps:
+      - name: Checkout git repository
+        uses: actions/checkout@master
+      - name: Run Rust tests
+        run: |
+          cargo build --release
+          target/release/vartrix --help | grep -q USAGE
+          mkdir ${{runner.temp}}/artifacts
+          cp -a target/release/vartrix ${{runner.temp}}/artifacts/vartrix-macos
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v1
+        with:
+          name: vartrix
+          path: ${{runner.temp}}/artifacts
 
-      - name: Check Rust formatting
-        run: cargo fmt -- --check
+  setup-release:
+    needs: [linux, macos]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v1
+        with:
+          name: vartrix
+          path: ${{runner.temp}}/artifacts
 
-      - name: Run Rust build
-        run: cargo build --release
+      - run: ls ${{runner.temp}}/artifacts
 
       - name: Create Release
         id: create_release
@@ -30,14 +75,25 @@ jobs:
           release_name: Release ${{ github.ref }}
           draft: false
           prerelease: false
-          
-      - name: Upload Release Asset
-        id: upload-release-asset 
+
+      - name: Upload Linux
+        id: upload-linux-release 
         uses: actions/upload-release-asset@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          upload_url: ${{ steps.create_release.outputs.upload_url }} # This pulls from the CREATE RELEASE step above, referencing it's ID to get its outputs object, which include a `upload_url`. See this blog post for more info: https://jasonet.co/posts/new-features-of-github-actions/#passing-data-to-future-steps 
-          asset_path: target/release/vartrix
+          upload_url: ${{ steps.create_release.outputs.upload_url }} 
+          asset_path: ${{runner.temp}}/artifacts/vartrix-linux
           asset_name: vartrix_linux
+          asset_content_type: application/octet-stream
+
+      - name: Upload Mac
+        id: upload-mac-release
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }} 
+          asset_path: ${{runner.temp}}/artifacts/vartrix-macos
+          asset_name: vartrix_macos
           asset_content_type: application/octet-stream
