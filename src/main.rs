@@ -584,7 +584,7 @@ pub fn validate_inputs(
         }
         let chrom_len = chrom_len_fast(&chr, &sizes)?;
         let alleles = rh.rec.alleles();
-        let end = rh.rec.pos() + alleles[0].len() as u32;
+        let end = rh.rec.pos() as u32 + alleles[0].len() as u32;
         if end as u64 > chrom_len {
             error!("Record {}:{} has end position {}, which is larger than the chromosome length ({}). Does your FASTA match your VCF?", chr, rh.rec.pos(), end, chrom_len);
             process::exit(1);
@@ -619,8 +619,8 @@ pub fn evaluate_rec<'a>(
 
     let locus = Locus {
         chrom: chr.to_string(),
-        start: rh.rec.pos(),
-        end: rh.rec.pos() + alleles[0].len() as u32,
+        start: rh.rec.pos() as u32,
+        end: rh.rec.pos() as u32 + alleles[0].len() as u32,
     };
 
     // used for logging
@@ -835,7 +835,7 @@ pub fn evaluate_alns(
 
     let tid = bam.header().tid(haps.locus.chrom.as_bytes()).unwrap();
 
-    bam.fetch(tid, haps.locus.start, haps.locus.end)?;
+    bam.fetch(tid, haps.locus.start as u64, haps.locus.end as u64)?;
 
     debug!("Evaluating record {}", locus_str);
     for _rec in bam.records() {

@@ -5,7 +5,7 @@ authors = ["Ian Fiddes <ian.t.fiddes@gmail.com>", "Patrick Marks <patrick@10xgen
 
 [dependencies]
 bio = ">=0.29"
-rust-htslib = { git = "https://github.com/rust-bio/rust-htslib.git", rev = "37533bded4692a78cfe080378a09209b95dc3cca" }
+rust-htslib = "0.30"
 csv = "1"
 failure = "0.1.5"
 sprs = "*"
