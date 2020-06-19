@@ -751,9 +751,25 @@ pub fn get_cell_barcode(
     }
 }
 
-pub fn get_umi(rec: &Record) -> Option<Vec<u8>> {
+fn base_to_bits(b: u8) -> u32 {
+    match b {
+        b'A' => 0,
+        b'C' => 1,
+        b'G' => 2,
+        b'T' => 3,
+        _ => 0,
+    }
+}
+
+pub fn get_umi(rec: &Record) -> Option<u32> {
     match rec.aux(b"UB") {
-        Some(Aux::String(hp)) => Some(hp.to_vec()),
+        Some(Aux::String(hp)) => {
+            let mut umi = 0;
+            for b in hp.iter() {
+                umi = (umi << 2) | base_to_bits(*b)
+            }
+            Some(umi)
+        },
         _ => None,
     }
 }
@@ -884,7 +900,7 @@ pub fn evaluate_alns(
         }
         // if no UMIs in this dataset, just plug in dummy UMI
         let umi = if args.use_umi == false {
-            vec![1 as u8]
+            0
         } else {
             _umi.unwrap()
         };
@@ -997,7 +1013,7 @@ pub fn construct_haplotypes(
 
 pub struct Scores {
     pub cell_index: u32,
-    pub umi: Vec<u8>,
+    pub umi: u32,
     pub ref_score: i32,
     pub alt_score: i32,
 }
@@ -1064,7 +1080,7 @@ fn parse_scores(scores: &Vec<Scores>, umi: bool) -> Vec<CellCalls> {
                 debug!(
                     "cell_index {} / UMI {} saw counts ref: {} alt: {} unk: {}",
                     &cell_index,
-                    String::from_utf8(_umi.clone()).unwrap(),
+                    _umi.clone(),
                     counts.ref_count,
                     counts.alt_count,
                     counts.unk_count
