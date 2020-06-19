@@ -602,7 +602,19 @@ pub fn evaluate_chunk<'a>(
     let mut chunk_scores = Vec::new();
     for rh in chunk.iter() {
         let (i, scores) = evaluate_rec(rh, rdr, args)?;
-        chunk_scores.push((i, scores))
+        chunk_scores.push((i, scores));
+
+        if chunk_scores.len() % 1000 == 0 {
+            println!("results: {}", chunk_scores.len());
+            let total_scores: usize = 
+                chunk_scores
+                .iter()
+                .map(|(_, a)| a.scores.len())
+                .sum();
+
+            println!("num results: {}, total_score: {}", chunk_scores.len(), total_scores);
+        }
+
     }
     Ok(chunk_scores)
 }
