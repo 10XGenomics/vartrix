@@ -230,6 +230,7 @@ fn _main(cli_args: Vec<String>) -> Result<(), Error> {
 
     let mut rdr = bcf::Reader::from_path(&vcf_file)?; // have to re-start the reader
 
+    info!("Loading variants...");
     let mut recs = Vec::new();
     for (i, _rec) in rdr.records().enumerate() {
         let rec = _rec?;
@@ -243,6 +244,9 @@ fn _main(cli_args: Vec<String>) -> Result<(), Error> {
         recs.push(s);
     }
 
+    info!("Loaded {} variants", recs.len());
+
+
     // need to figure out how big to make the matrix, so just read the number of lines in the VCF
     let num_vars = recs.len();
     if num_vars == 0 {
@@ -250,7 +254,7 @@ fn _main(cli_args: Vec<String>) -> Result<(), Error> {
     }
 
     info!(
-        "Initialized a {} variants x {} cell barcodes matrix",
+        "Initializing a {} variants x {} cell barcodes matrix",
         num_vars,
         cell_barcodes.len()
     );
