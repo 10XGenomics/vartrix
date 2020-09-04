@@ -938,10 +938,7 @@ pub fn read_locus(
     let mut seq = Vec::new();
 
     let new_start = max(0, loc.start as i32 - pad_left as i32) as u64;
-    let new_end = min(
-        loc.end + pad_right,
-        chrom_len(&loc.chrom, fa).unwrap(),
-    );
+    let new_end = min(loc.end + pad_right, chrom_len(&loc.chrom, fa).unwrap());
 
     fa.fetch(&loc.chrom, new_start, new_end).unwrap();
     fa.read(&mut seq).unwrap();
@@ -976,10 +973,7 @@ pub fn construct_haplotypes(
         let mut alt_hap = Vec::new();
         alt_hap.extend(get_range(locus.start.saturating_sub(padding), locus.start));
         alt_hap.extend(alt);
-        alt_hap.extend(get_range(
-            locus.end,
-            min(locus.end + padding, chrom_len),
-        ));
+        alt_hap.extend(get_range(locus.end, min(locus.end + padding, chrom_len)));
         alt_hap
     };
 
