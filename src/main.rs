@@ -237,7 +237,7 @@ fn _main(cli_args: Vec<String>) -> Result<(), Error> {
             i: i,
             rec: rec,
             fasta_file: &fasta_file,
-            padding: padding,
+            padding: padding as u64,
             cell_barcodes: &cell_barcodes,
         };
         recs.push(s);
@@ -431,14 +431,14 @@ pub struct RecHolder<'a> {
     i: usize,
     rec: bcf::Record,
     fasta_file: &'a str,
-    padding: u32,
+    padding: u64,
     cell_barcodes: &'a HashMap<Vec<u8>, u32>,
 }
 
 pub struct Locus {
     pub chrom: String,
-    pub start: u32,
-    pub end: u32,
+    pub start: u64,
+    pub end: u64,
 }
 
 pub struct VariantHaps<'a> {
@@ -584,7 +584,7 @@ pub fn validate_inputs(
         }
         let chrom_len = chrom_len_fast(&chr, &sizes)?;
         let alleles = rh.rec.alleles();
-        let end = rh.rec.pos() + alleles[0].len() as u32;
+        let end = rh.rec.pos() + alleles[0].len() as i64;
         if end as u64 > chrom_len {
             error!("Record {}:{} has end position {}, which is larger than the chromosome length ({}). Does your FASTA match your VCF?", chr, rh.rec.pos(), end, chrom_len);
             process::exit(1);
@@ -619,8 +619,8 @@ pub fn evaluate_rec<'a>(
 
     let locus = Locus {
         chrom: chr.to_string(),
-        start: rh.rec.pos(),
-        end: rh.rec.pos() + alleles[0].len() as u32,
+        start: rh.rec.pos() as u64,
+        end: rh.rec.pos() as u64 + alleles[0].len() as u64,
     };
 
     // used for logging
@@ -795,7 +795,7 @@ pub fn useful_alignment(haps: &VariantHaps, rec: &bam::Record) -> Result<bool, E
     let cigar = rec.cigar();
     for i in haps.locus.start..=haps.locus.end {
         // Don't include soft-clips but do include deletions
-        let t = cigar.read_pos(i, false, true)?;
+        let t = cigar.read_pos(i as u32, false, true)?;
         if t.is_some() {
             return Ok(true);
         }
@@ -932,16 +932,16 @@ pub fn evaluate_alns(
 pub fn read_locus(
     fa: &mut fasta::IndexedReader<File>,
     loc: &Locus,
-    pad_left: u32,
-    pad_right: u32,
+    pad_left: u64,
+    pad_right: u64,
 ) -> (Vec<u8>, usize) {
     let mut seq = Vec::new();
 
     let new_start = max(0, loc.start as i32 - pad_left as i32) as u64;
-    let new_end = u64::from(min(
+    let new_end = min(
         loc.end + pad_right,
-        chrom_len(&loc.chrom, fa).unwrap() as u32,
-    ));
+        chrom_len(&loc.chrom, fa).unwrap(),
+    );
 
     fa.fetch(&loc.chrom, new_start, new_end).unwrap();
     fa.read(&mut seq).unwrap();
@@ -958,7 +958,7 @@ pub fn construct_haplotypes(
     fa: &mut fasta::IndexedReader<File>,
     locus: &Locus,
     alt: &[u8],
-    padding: u32,
+    padding: u64,
 ) -> (Vec<u8>, Vec<u8>) {
     let chrom_len = chrom_len(&locus.chrom, fa).unwrap();
 
@@ -978,7 +978,7 @@ pub fn construct_haplotypes(
         alt_hap.extend(alt);
         alt_hap.extend(get_range(
             locus.end,
-            min(locus.end + padding, chrom_len as u32),
+            min(locus.end + padding, chrom_len),
         ));
         alt_hap
     };
