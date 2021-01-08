@@ -1,6 +1,6 @@
-use log::{debug, info, warn, error};
-use human_panic::setup_panic;
 use failure::format_err;
+use human_panic::setup_panic;
+use log::{debug, error, info, warn};
 
 use bio::alignment::pairwise::banded;
 use bio::io::fasta;
