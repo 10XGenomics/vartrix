@@ -2,6 +2,7 @@
 name = "vartrix"
 version = "1.1.14"
 authors = ["Ian Fiddes <ian.t.fiddes@gmail.com>", "Patrick Marks <patrick@10xgenomics.com>"]
+edition = "2018"
 
 [dependencies]
 bio = ">=0.29"

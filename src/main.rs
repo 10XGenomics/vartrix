@@ -1,20 +1,6 @@
-extern crate bio;
-extern crate clap;
-extern crate csv;
-extern crate flate2;
-extern crate itertools;
-extern crate rayon;
-extern crate rust_htslib;
-extern crate simplelog;
-extern crate sprs;
-extern crate tempfile;
-extern crate terminal_size;
-#[macro_use]
-extern crate log;
-#[macro_use]
-extern crate failure;
-#[macro_use]
-extern crate human_panic;
+use log::{debug, info, warn, error};
+use human_panic::setup_panic;
+use failure::format_err;
 
 use bio::alignment::pairwise::banded;
 use bio::io::fasta;
