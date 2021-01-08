@@ -295,7 +295,7 @@ fn _main(cli_args: Vec<String>) -> Result<(), Error> {
         rec_chunks
             .par_iter()
             .map_with(rdr, |r, rec_chunk| {
-                evaluate_chunk(rec_chunk, r, &args_holder).unwrap()
+                evaluate_chunk(rec_chunk, r, &args_holder)
             })
             .collect()
     });
@@ -327,8 +327,8 @@ fn _main(cli_args: Vec<String>) -> Result<(), Error> {
         metrics.num_multiallelic_recs += m.num_multiallelic_recs;
     }
 
-    for v in results.iter() {
-        for (i, scores) in v.iter() {
+    for v in results {
+        for (i, scores) in v?.iter() {
             add_metrics(&mut metrics, &scores.metrics);
             match scoring_method {
                 "alt_frac" => {
@@ -850,7 +850,7 @@ pub fn evaluate_alns(
             );
             r.metrics.num_duplicates += 1;
             continue;
-        } else if useful_alignment(haps, &rec).unwrap() == false {
+        } else if useful_alignment(haps, &rec)? == false {
             debug!(
                 "{} skipping read {} due to not being useful",
                 locus_str,
