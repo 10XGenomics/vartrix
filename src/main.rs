@@ -77,6 +77,10 @@ fn get_args() -> clap::App<'static, 'static> {
              .long("out-variants")
              .value_name("OUTPUT_FILE")
              .help("Output variant file. Reports ordered list of variants to help with loading into downstream tools"))
+        .arg(Arg::with_name("out_barcodes")
+             .long("out-barcodes")
+             .value_name("OUTPUT_FILE")
+             .help("Output cell barcode file. Barcode labels of output matrices. Will have duplicate barcodes removed compared to input barcodes file."))
         .arg(Arg::with_name("padding")
              .short("p")
              .long("padding")
@@ -393,6 +397,15 @@ fn _main(cli_args: Vec<String>) -> Result<(), Error> {
         debug!("Wrote variants file");
     }
 
+    if args.is_present("out_barcodes") {
+        let out_bcs = args
+            .value_of("out_barcodes")
+            .expect("Out barcodes path flag set but no value");
+
+        validate_output_path(&out_bcs);
+        write_barcodes(out_bcs, &cell_barcodes)?;
+    }
+
     // warn the user if they may have made a mistake
     let sum = matrix.data().iter().fold(0.0, |a, &b| a + b);
     if sum == 0.0 {
@@ -682,9 +695,8 @@ pub fn evaluate_rec<'a>(
 }
 
 pub fn load_barcodes(filename: impl AsRef<Path>) -> Result<HashMap<Vec<u8>, u32>, Error> {
-    let r = open_with_gz(filename.as_ref())
+    let reader = open_with_gz(filename.as_ref())
         .context(format!("error open barcodes file: {:?}", filename.as_ref()))?;
-    let reader = BufReader::with_capacity(32 * 1024, r);
 
     let mut bc_set = HashMap::new();
 
@@ -701,7 +713,7 @@ pub fn load_barcodes(filename: impl AsRef<Path>) -> Result<HashMap<Vec<u8>, u32>
         error!("Loaded 0 barcodes. Is your barcode file gzipped or empty?");
         process::exit(1);
     }
-    debug!("Loaded {} barcodes", num_bcs);
+    info!("Loaded {} barcodes", num_bcs);
     Ok(bc_set)
 }
 
@@ -1160,6 +1172,22 @@ pub fn write_variants(out_variants: &str, vcf_file: &str) -> Result<(), Error> {
     Ok(())
 }
 
+pub fn write_barcodes(out_file: &str, cell_barcodes: &HashMap<Vec<u8>, u32>) -> Result<(), Error> {
+    // write the cell barcodes to a TSV file for easy loading into Seraut
+    let mut of = std::io::BufWriter::new(File::create(out_file)?);
+
+    let mut ord: Vec<_> = cell_barcodes.iter().collect();
+    ord.sort_by_key(|x| x.1);
+    let bc_list: Vec<_> = ord.iter().cloned().map(|x| x.0).collect();
+
+    for bc in bc_list {
+        let line = format!("{}\n", std::str::from_utf8(bc).unwrap()).into_bytes();
+        of.write_all(&line).context("error writing barcodes file")?;
+    }
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1308,10 +1336,16 @@ mod tests {
     fn test_coverage_matrices_umi_gzipped_bcs() {
         let mut cmds = Vec::new();
         let tmp_dir = tempdir().unwrap();
+
         let out_file = tmp_dir.path().join("result.mtx");
         let out_file = out_file.to_str().unwrap();
+
         let out_ref = tmp_dir.path().join("result_ref.mtx");
         let out_ref = out_ref.to_str().unwrap();
+
+        let out_bcs = tmp_dir.path().join("barcodes.tsv");
+        let out_bcs = out_bcs.to_str().unwrap();
+
         for l in &[
             "vartrix",
             "-v",
@@ -1329,6 +1363,8 @@ mod tests {
             "coverage",
             "--ref-matrix",
             out_ref,
+            "--out-barcodes",
+            out_bcs,
         ] {
             cmds.push(l.to_string());
         }
@@ -1341,6 +1377,10 @@ mod tests {
         let expected_mat: TriMat<usize> =
             read_matrix_market("test/test_coverage_ref_umi.mtx").unwrap();
         assert_eq!(seen_mat.to_csr(), expected_mat.to_csr());
+
+        let old_bcs = load_barcodes("test/barcodes.tsv.gz").unwrap();
+        let new_bcs = load_barcodes(out_bcs).unwrap();
+        assert_eq!(old_bcs, new_bcs);
     }
 
     #[test]
