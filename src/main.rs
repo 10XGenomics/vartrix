@@ -815,7 +815,11 @@ pub fn evaluate_alns(
     // perform Smith-Waterman against both haplotypes
     // and report the scores
 
-    bam.fetch((haps.locus.chrom.as_bytes(), haps.locus.start, haps.locus.end))?;
+    bam.fetch((
+        haps.locus.chrom.as_bytes(),
+        haps.locus.start,
+        haps.locus.end,
+    ))?;
 
     debug!("Evaluating record {}", locus_str);
     for _rec in bam.records() {
