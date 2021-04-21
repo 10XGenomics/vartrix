@@ -793,9 +793,13 @@ pub fn useful_alignment(haps: &VariantHaps, rec: &bam::Record) -> Result<bool, E
     let cigar = rec.cigar();
     for i in haps.locus.start..=haps.locus.end {
         // Don't include soft-clips but do include deletions
-        let t = cigar.read_pos(i as u32, false, true)?;
-        if t.is_some() {
-            return Ok(true);
+        match cigar.read_pos(i as u32, false, true) {
+            Ok(Some(_)) => return Ok(true),
+            Ok(None) => (),
+            Err(e) => {
+                info!("Skipping read {:?} due to invalid CIGAR: {}", rec, e);
+                return Ok(false);
+            }
         }
     }
     Ok(false)
