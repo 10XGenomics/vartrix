@@ -141,7 +141,7 @@ Where `my.vcf` is the VCF that you used as input to VarTrix.
 snv_matrix <- readMM("matrix.mtx")
 
 # convert the matrix to a dataframe
-snv_matrix <- as.data.frame(as.matrix(t(snv_matrix)))
+snv_matrix <- as.data.frame(as.matrix(snv_matrix))
 
 #read in the cell barcodes output by Cell Ranger
 barcodes <- read.table("filtered_matrix_mex/barcodes.tsv", header = F)
