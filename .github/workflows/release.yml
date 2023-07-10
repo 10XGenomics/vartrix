@@ -31,7 +31,7 @@ jobs:
           mkdir ${{runner.temp}}/artifacts;
           cp -a target/release/vartrix ${{runner.temp}}/artifacts/vartrix-linux
       - name: Upload build artifact
-        uses: actions/upload-artifact@v1
+        uses: actions/upload-artifact@v3
         with:
           name: vartrix
           path: ${{runner.temp}}/artifacts
@@ -49,7 +49,7 @@ jobs:
           mkdir ${{runner.temp}}/artifacts
           cp -a target/release/vartrix ${{runner.temp}}/artifacts/vartrix-macos
       - name: Upload build artifact
-        uses: actions/upload-artifact@v1
+        uses: actions/upload-artifact@v3
         with:
           name: vartrix
           path: ${{runner.temp}}/artifacts
