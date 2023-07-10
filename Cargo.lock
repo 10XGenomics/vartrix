@@ -673,15 +673,6 @@ dependencies = [
 
 [[package]]
 name = "itertools"
-version = "0.6.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d3f2be4da1690a039e9ae5fd575f706a63ad5a2120f161b1d653c9da3930dd21"
-dependencies = [
- "either",
-]
-
-[[package]]
-name = "itertools"
 version = "0.7.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0d47946d458e94a1b7bcabbf6521ea7c037062c81f534615abcad76e84d4970d"
@@ -1742,7 +1733,7 @@ dependencies = [
  "failure",
  "flate2",
  "human-panic",
- "itertools 0.6.5",
+ "itertools 0.8.0",
  "log",
  "rayon",
  "rust-htslib",
