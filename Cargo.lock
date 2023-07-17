@@ -187,7 +187,7 @@ dependencies = [
  "fnv",
  "fxhash",
  "getset",
- "itertools",
+ "itertools 0.8.2",
  "itertools-num",
  "lazy_static",
  "multimap",
@@ -768,9 +768,18 @@ dependencies = [
 
 [[package]]
 name = "itertools"
-version = "0.8.0"
+version = "0.8.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5b8467d9c1cebe26feb08c640139247fac215782d35371ade9a2136ed6085358"
+checksum = "f56a2d0bc861f9165be4eb3442afd3c236d8a98afd426f65d92324ae1091a484"
+dependencies = [
+ "either",
+]
+
+[[package]]
+name = "itertools"
+version = "0.11.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b1c173a5686ce8bfa551b3563d0c2170bf24ca44da99c7ca4bfdab5418c3fe57"
 dependencies = [
  "either",
 ]
@@ -936,7 +945,7 @@ version = "0.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "25b001fc2f5df269365fb77bd8396ce6b1f61c9848f7f088c25e57494bacc57b"
 dependencies = [
- "itertools",
+ "itertools 0.8.2",
  "matrixmultiply",
  "num-complex",
  "num-integer",
@@ -1785,7 +1794,7 @@ dependencies = [
  "failure",
  "flate2",
  "human-panic",
- "itertools",
+ "itertools 0.11.0",
  "log",
  "rayon",
  "rust-htslib",
