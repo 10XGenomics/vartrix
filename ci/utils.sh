@@ -19,10 +19,24 @@ cargo_out_dir() {
 host() {
     case "$TRAVIS_OS_NAME" in
         linux)
-            echo x86_64-unknown-linux-gnu
+            case "${TRAVIS_CPU_ARCH:-amd64}" in
+                arm64)
+                    echo aarch64-unknown-linux-gnu
+                    ;;
+                *)
+                    echo x86_64-unknown-linux-gnu
+                    ;;
+            esac
             ;;
         osx)
-            echo x86_64-apple-darwin
+            case "${TRAVIS_CPU_ARCH:-amd64}" in
+                arm64)
+                    echo aarch64-apple-darwin
+                    ;;
+                *)
+                    echo x86_64-apple-darwin
+                    ;;
+            esac
             ;;
     esac
 }
@@ -34,6 +48,9 @@ architecture() {
             ;;
         i686-*|i586-*|i386-*)
             echo i386
+            ;;
+        aarch64-*)
+            echo aarch64
             ;;
         arm*-unknown-linux-gnueabihf)
             echo armhf
@@ -73,6 +90,13 @@ is_arm() {
     case "$(architecture)" in
         armhf) return 0 ;;
         *)     return 1 ;;
+    esac
+}
+
+is_aarch64() {
+    case "$(architecture)" in
+        aarch64) return 0 ;;
+        *)       return 1 ;;
     esac
 }
 
