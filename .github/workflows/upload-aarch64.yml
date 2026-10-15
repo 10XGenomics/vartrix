@@ -1,0 +1,57 @@
+name: Upload aarch64 Binaries to Existing Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag to upload assets to (e.g. v1.1.22)'
+        required: true
+        default: 'v1.1.22'
+
+env:
+  CARGO_INCREMENTAL: 0
+
+jobs:
+
+  linux-aarch64:
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build
+        run: cargo build --release --target aarch64-unknown-linux-gnu
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: vartrix-aarch64-unknown-linux-gnu
+          path: target/aarch64-unknown-linux-gnu/release/vartrix
+
+  macos-aarch64:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build
+        run: cargo build --release --target aarch64-apple-darwin
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: vartrix-aarch64-apple-darwin
+          path: target/aarch64-apple-darwin/release/vartrix
+
+  upload-release-assets:
+    needs: [linux-aarch64, macos-aarch64]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Upload to release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload ${{ github.event.inputs.tag }} \
+            artifacts/vartrix-aarch64-unknown-linux-gnu/vartrix#vartrix_linux_aarch64 \
+            artifacts/vartrix-aarch64-apple-darwin/vartrix#vartrix_macos_aarch64 \
+            --repo ${{ github.repository }}
