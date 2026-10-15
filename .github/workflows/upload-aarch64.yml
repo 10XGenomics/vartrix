@@ -1,4 +1,4 @@
-name: Build aarch64 Binaries
+name: Build Binaries
 
 on:
   push:
@@ -9,6 +9,18 @@ env:
   CARGO_INCREMENTAL: 0
 
 jobs:
+
+  linux-x86_64:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build
+        run: cargo build --release --target x86_64-unknown-linux-gnu
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: vartrix-x86_64-unknown-linux-gnu
+          path: target/x86_64-unknown-linux-gnu/release/vartrix
 
   linux-aarch64:
     runs-on: ubuntu-24.04-arm
@@ -21,6 +33,18 @@ jobs:
         with:
           name: vartrix-aarch64-unknown-linux-gnu
           path: target/aarch64-unknown-linux-gnu/release/vartrix
+
+  macos-x86_64:
+    runs-on: macos-13
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build
+        run: cargo build --release --target x86_64-apple-darwin
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: vartrix-x86_64-apple-darwin
+          path: target/x86_64-apple-darwin/release/vartrix
 
   macos-aarch64:
     runs-on: macos-14
