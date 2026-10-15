@@ -222,6 +222,7 @@ checksum = "3ded4057c258ba199e2d26386d3af3780957ecaee6c4ef4041c6b4b8b97c0b06"
 
 [[package]]
 <<<<<<< HEAD
+<<<<<<< HEAD
 =======
 name = "block2"
 version = "0.6.2"
@@ -233,6 +234,8 @@ dependencies = [
 
 [[package]]
 >>>>>>> b33a99d (Bump simplelog from 0.5.3 to 0.12.2)
+=======
+>>>>>>> 55a0d13 (Bump human-panic from 1.1.5 to 2.0.4)
 name = "borsh"
 version = "1.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -503,6 +506,7 @@ dependencies = [
 
 [[package]]
 <<<<<<< HEAD
+<<<<<<< HEAD
 =======
 name = "dispatch2"
 version = "0.3.1"
@@ -515,6 +519,8 @@ dependencies = [
 
 [[package]]
 >>>>>>> b33a99d (Bump simplelog from 0.5.3 to 0.12.2)
+=======
+>>>>>>> 55a0d13 (Bump human-panic from 1.1.5 to 2.0.4)
 name = "displaydoc"
 version = "0.2.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1209,6 +1215,7 @@ dependencies = [
 ]
 
 [[package]]
+<<<<<<< HEAD
 name = "objc2"
 version = "0.6.5"
 >>>>>>> b33a99d (Bump simplelog from 0.5.3 to 0.12.2)
@@ -1219,6 +1226,8 @@ dependencies = [
 ]
 
 [[package]]
+=======
+>>>>>>> 55a0d13 (Bump human-panic from 1.1.5 to 2.0.4)
 name = "objc2-core-foundation"
 version = "0.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2112,6 +2121,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "winapi"
+version = "0.3.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5c839a674fcd7a98952e593242ea400abe93992746761e38641405d28b00f419"
+dependencies = [
+ "winapi-i686-pc-windows-gnu",
+ "winapi-x86_64-pc-windows-gnu",
+]
+
+[[package]]
+name = "winapi-i686-pc-windows-gnu"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ac3b87c63620426dd9b991e5ce0329eff545bccbbb34f3be09ff6fb6ab51b7b6"
+
+[[package]]
 name = "winapi-util"
 version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2208,9 +2233,12 @@ dependencies = [
  "proc-macro2 1.0.107",
  "quote 1.0.47",
  "syn 2.0.119",
+<<<<<<< HEAD
 =======
  "windows-sys",
 >>>>>>> b33a99d (Bump simplelog from 0.5.3 to 0.12.2)
+=======
+>>>>>>> 55a0d13 (Bump human-panic from 1.1.5 to 2.0.4)
 ]
 
 [[package]]
@@ -2221,6 +2249,9 @@ checksum = "f0805222e57f7521d6a62e36fa9163bc891acd422f971defe97d64e70d0a4fe5"
 
 [[package]]
 <<<<<<< HEAD
+<<<<<<< HEAD
+=======
+>>>>>>> 55a0d13 (Bump human-panic from 1.1.5 to 2.0.4)
 name = "windows-numerics"
 version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2249,8 +2280,11 @@ dependencies = [
 ]
 
 [[package]]
+<<<<<<< HEAD
 =======
 >>>>>>> b33a99d (Bump simplelog from 0.5.3 to 0.12.2)
+=======
+>>>>>>> 55a0d13 (Bump human-panic from 1.1.5 to 2.0.4)
 name = "windows-sys"
 version = "0.61.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
