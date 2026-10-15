@@ -4,7 +4,7 @@ use log::{debug, error, info, warn};
 
 use bio::alignment::pairwise::banded;
 use bio::io::fasta;
-use clap::{App, Arg};
+use clap::{Arg, ArgAction, Command};
 use failure::{Error, ResultExt};
 use flate2::read::MultiGzDecoder;
 use itertools::Itertools;
@@ -37,97 +37,100 @@ const MISMATCH: i32 = -5; // Mismatch score
 const GAP_OPEN: i32 = -5; // Gap open score
 const GAP_EXTEND: i32 = -1; // Gap extend score
 
-fn get_args() -> clap::App<'static, 'static> {
-    let args = App::new("vartrix")
-        .set_term_width(if let Some((Width(w), _)) = terminal_size() { w as usize } else { 120 })
+fn get_args() -> Command {
+    let args = Command::new("vartrix")
+        .term_width(if let Some((Width(w), _)) = terminal_size() { w as usize } else { 120 })
         .version(env!("CARGO_PKG_VERSION"))
         .author("Ian Fiddes <ian.fiddes@10xgenomics.com> and Patrick Marks <patrick@10xgenomics.com>")
         .about("Variant assignment for single cell genomics")
-        .arg(Arg::with_name("vcf")
-             .short("v")
+        .arg(Arg::new("vcf")
+             .short('v')
              .long("vcf")
              .value_name("FILE")
              .help("Called variant file (VCF)")
              .required(true))
-        .arg(Arg::with_name("bam")
-             .short("b")
+        .arg(Arg::new("bam")
+             .short('b')
              .long("bam")
              .value_name("FILE")
              .help("Cellranger BAM file")
              .required(true))
-        .arg(Arg::with_name("fasta")
-             .short("f")
+        .arg(Arg::new("fasta")
+             .short('f')
              .long("fasta")
              .value_name("FILE")
              .help("Genome fasta file")
              .required(true))
-        .arg(Arg::with_name("cell_barcodes")
-             .short("c")
+        .arg(Arg::new("cell_barcodes")
+             .short('c')
              .long("cell-barcodes")
              .value_name("FILE")
              .help("File with cell barcodes to be evaluated")
              .required(true))
-        .arg(Arg::with_name("out_matrix")
-             .short("o")
+        .arg(Arg::new("out_matrix")
+             .short('o')
              .long("out-matrix")
              .value_name("OUTPUT_FILE")
              .default_value("out_matrix.mtx")
              .help("Output Matrix Market file (.mtx)"))
-        .arg(Arg::with_name("out_variants")
+        .arg(Arg::new("out_variants")
              .long("out-variants")
              .value_name("OUTPUT_FILE")
              .help("Output variant file. Reports ordered list of variants to help with loading into downstream tools"))
-        .arg(Arg::with_name("out_barcodes")
+        .arg(Arg::new("out_barcodes")
              .long("out-barcodes")
              .value_name("OUTPUT_FILE")
              .help("Output cell barcode file. Barcode labels of output matrices. Will have duplicate barcodes removed compared to input barcodes file."))
-        .arg(Arg::with_name("padding")
-             .short("p")
+        .arg(Arg::new("padding")
+             .short('p')
              .long("padding")
              .value_name("INTEGER")
              .default_value("100")
              .help("Number of padding to use on both sides of the variant. Should be at least 1/2 of read length"))
-        .arg(Arg::with_name("scoring_method")
-             .short("s")
+        .arg(Arg::new("scoring_method")
+             .short('s')
              .long("scoring-method")
-             .possible_values(&["consensus", "coverage", "alt_frac"])
+             .value_parser(["consensus", "coverage", "alt_frac"])
              .default_value("consensus")
              .help("Type of matrix to produce. In 'consensus' mode, cells with both ref and alt reads are given a 3, alt only reads a 2, and ref only reads a 1. Suitable for clustering.  In 'coverage' mode, it is required that you set --ref-matrix to store the second matrix in. The 'alt_frac' mode will report the fraction of alt reads, which is effectively the ratio of the alternate matrix to the sum of the alternate and coverage matrices."))
-        .arg(Arg::with_name("ref_matrix")
+        .arg(Arg::new("ref_matrix")
              .long("ref-matrix")
              .value_name("OUTPUT_FILE")
-             .required_if("scoring_method", "coverage")
+             .required_if_eq("scoring_method", "coverage")
              .default_value("ref_matrix.mtx")
              .help("Location to write reference Matrix Market file. Only used if --scoring-method is coverage"))
-        .arg(Arg::with_name("log_level")
+        .arg(Arg::new("log_level")
              .long("log-level")
-             .possible_values(&["info", "debug", "error"])
+             .value_parser(["info", "debug", "error"])
              .default_value("error")
              .help("Logging level"))
-        .arg(Arg::with_name("threads")
+        .arg(Arg::new("threads")
              .long("threads")
              .value_name("INTEGER")
              .default_value("1")
              .help("Number of parallel threads to use"))
-        .arg(Arg::with_name("mapq")
+        .arg(Arg::new("mapq")
              .long("mapq")
              .value_name("INTEGER")
              .default_value("0")
              .help("Minimum read mapping quality to consider"))
-        .arg(Arg::with_name("primary_alignments")
+        .arg(Arg::new("primary_alignments")
              .long("primary-alignments")
+             .action(ArgAction::SetTrue)
              .help("Use primary alignments only"))
-        .arg(Arg::with_name("no_duplicates")
+        .arg(Arg::new("no_duplicates")
              .long("no-duplicates")
+             .action(ArgAction::SetTrue)
              .help("Do not consider duplicate alignments"))
-        .arg(Arg::with_name("umi")
+        .arg(Arg::new("umi")
              .long("umi")
+             .action(ArgAction::SetTrue)
              .help("Consider UMI information when populating coverage matrices?"))
-        .arg(Arg::with_name("bam_tag")
+        .arg(Arg::new("bam_tag")
              .long("bam-tag")
              .default_value("CB")
              .help("BAM tag to consider for marking cells?"))
-        .arg(Arg::with_name("valid_chars")
+        .arg(Arg::new("valid_chars")
              .long("valid-chars")
              .default_value("ATGCatgc")
              .help("Valid characters in an alternative haplotype. This prevents non sequence-resolved variants from being genotyped."));
@@ -163,37 +166,66 @@ fn main() {
 fn _main(cli_args: Vec<String>) -> Result<(), Error> {
     let args = get_args().get_matches_from(cli_args);
     let fasta_file = args
-        .value_of("fasta")
+        .get_one::<String>("fasta")
+        .map(String::as_str)
         .expect("You must supply a fasta file");
-    let vcf_file = args.value_of("vcf").expect("You must supply a VCF file");
-    let bam_file = args.value_of("bam").expect("You must provide a BAM file");
+    let vcf_file = args
+        .get_one::<String>("vcf")
+        .map(String::as_str)
+        .expect("You must supply a VCF file");
+    let bam_file = args
+        .get_one::<String>("bam")
+        .map(String::as_str)
+        .expect("You must provide a BAM file");
     let cell_barcodes = args
-        .value_of("cell_barcodes")
+        .get_one::<String>("cell_barcodes")
+        .map(String::as_str)
         .expect("You must provide a cell barcodes file");
-    let out_matrix_path = args.value_of("out_matrix").unwrap_or_default();
-    let ref_matrix_path = args.value_of("ref_matrix").unwrap_or_default();
+    let out_matrix_path = args
+        .get_one::<String>("out_matrix")
+        .map(String::as_str)
+        .unwrap_or_default();
+    let ref_matrix_path = args
+        .get_one::<String>("ref_matrix")
+        .map(String::as_str)
+        .unwrap_or_default();
     let padding = args
-        .value_of("padding")
+        .get_one::<String>("padding")
+        .map(String::as_str)
         .unwrap_or_default()
         .parse::<u32>()
         .expect("Failed to convert padding to integer");
-    let scoring_method = args.value_of("scoring_method").unwrap_or_default();
+    let scoring_method = args
+        .get_one::<String>("scoring_method")
+        .map(String::as_str)
+        .unwrap_or_default();
     let threads = args
-        .value_of("threads")
+        .get_one::<String>("threads")
+        .map(String::as_str)
         .unwrap_or_default()
         .parse::<usize>()
         .expect("Failed to convert threads to integer");
     let mapq = args
-        .value_of("mapq")
+        .get_one::<String>("mapq")
+        .map(String::as_str)
         .unwrap_or_default()
         .parse::<u8>()
         .expect("Failed to convert mapq to integer");
-    let primary_only = args.is_present("primary_alignments");
-    let duplicates = args.is_present("no_duplicates");
-    let use_umi = args.is_present("umi");
-    let ll = args.value_of("log_level").unwrap();
-    let bam_tag = args.value_of("bam_tag").unwrap_or_default();
-    let valid_chars = args.value_of("valid_chars").unwrap_or_default();
+    let primary_only = args.get_flag("primary_alignments");
+    let duplicates = args.get_flag("no_duplicates");
+    let use_umi = args.get_flag("umi");
+    let ll = args
+        .get_one::<String>("log_level")
+        .map(String::as_str)
+        .unwrap();
+    let bam_tag = args
+        .get_one::<String>("bam_tag")
+        .map(String::as_str)
+        .unwrap_or_default();
+    let valid_chars = args
+        .get_one::<String>("valid_chars")
+        .map(String::as_str)
+        .unwrap_or_default();
 
     let ll = match ll {
         "info" => LevelFilter::Info,
@@ -382,24 +414,26 @@ fn _main(cli_args: Vec<String>) -> Result<(), Error> {
         .context("Error writing out-matrix")?;
     debug!("Wrote out matrix file");
 
-    if scoring_method == "coverage" && args.is_present("ref_matrix") {
+    if scoring_method == "coverage" && args.contains_id("ref_matrix") {
         let _ = write_matrix_market(&ref_matrix_path as &str, &ref_matrix)
             .context("Error writing ref-matrix")?;
         debug!("Wrote reference matrix file");
     }
 
-    if args.is_present("out_variants") {
+    if args.contains_id("out_variants") {
         let out_variants = args
-            .value_of("out_variants")
+            .get_one::<String>("out_variants")
+            .map(String::as_str)
             .expect("Out variants path flag set but no value");
         validate_output_path(&out_variants);
         write_variants(out_variants, vcf_file)?;
         debug!("Wrote variants file");
     }
 
-    if args.is_present("out_barcodes") {
+    if args.contains_id("out_barcodes") {
         let out_bcs = args
-            .value_of("out_barcodes")
+            .get_one::<String>("out_barcodes")
+            .map(String::as_str)
             .expect("Out barcodes path flag set but no value");
 
         validate_output_path(&out_bcs);
