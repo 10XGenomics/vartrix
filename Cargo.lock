@@ -223,6 +223,7 @@ checksum = "3ded4057c258ba199e2d26386d3af3780957ecaee6c4ef4041c6b4b8b97c0b06"
 [[package]]
 <<<<<<< HEAD
 <<<<<<< HEAD
+<<<<<<< HEAD
 =======
 name = "block2"
 version = "0.6.2"
@@ -239,6 +240,11 @@ dependencies = [
 name = "borsh"
 version = "1.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
+=======
+name = "borsh"
+version = "1.8.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+>>>>>>> 801027d (Bump clap from 2.33.0 to 4.5.13)
 checksum = "553c5d846a6ba5150c65e3b1b8ec073bcf1abc20f9b7220de384a4443ea4e20a"
 dependencies = [
  "borsh-derive",
@@ -496,6 +502,7 @@ dependencies = [
 [[package]]
 name = "derive-new"
 version = "0.7.0"
+<<<<<<< HEAD
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2cdc8d50f426189eef89dac62fabfa0abb27d5cc008f25bf4156a0203325becc"
 dependencies = [
@@ -521,6 +528,17 @@ dependencies = [
 >>>>>>> b33a99d (Bump simplelog from 0.5.3 to 0.12.2)
 =======
 >>>>>>> 55a0d13 (Bump human-panic from 1.1.5 to 2.0.4)
+=======
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2cdc8d50f426189eef89dac62fabfa0abb27d5cc008f25bf4156a0203325becc"
+dependencies = [
+ "proc-macro2 1.0.107",
+ "quote 1.0.47",
+ "syn 2.0.119",
+]
+
+[[package]]
+>>>>>>> 801027d (Bump clap from 2.33.0 to 4.5.13)
 name = "displaydoc"
 version = "0.2.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2143,6 +2161,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
 <<<<<<< HEAD
+<<<<<<< HEAD
  "winapi-i686-pc-windows-gnu",
  "winapi-x86_64-pc-windows-gnu",
 ]
@@ -2159,6 +2178,8 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
+=======
+>>>>>>> 801027d (Bump clap from 2.33.0 to 4.5.13)
  "windows-sys",
 ]
 
@@ -2234,11 +2255,14 @@ dependencies = [
  "quote 1.0.47",
  "syn 2.0.119",
 <<<<<<< HEAD
+<<<<<<< HEAD
 =======
  "windows-sys",
 >>>>>>> b33a99d (Bump simplelog from 0.5.3 to 0.12.2)
 =======
 >>>>>>> 55a0d13 (Bump human-panic from 1.1.5 to 2.0.4)
+=======
+>>>>>>> 801027d (Bump clap from 2.33.0 to 4.5.13)
 ]
 
 [[package]]
@@ -2281,10 +2305,13 @@ dependencies = [
 
 [[package]]
 <<<<<<< HEAD
+<<<<<<< HEAD
 =======
 >>>>>>> b33a99d (Bump simplelog from 0.5.3 to 0.12.2)
 =======
 >>>>>>> 55a0d13 (Bump human-panic from 1.1.5 to 2.0.4)
+=======
+>>>>>>> 801027d (Bump clap from 2.33.0 to 4.5.13)
 name = "windows-sys"
 version = "0.61.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
