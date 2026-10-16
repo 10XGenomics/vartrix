@@ -1,24 +1,43 @@
 [package]
 name = "vartrix"
-version = "1.1.22"
-authors = ["Ian Fiddes <ian.t.fiddes@gmail.com>", "Patrick Marks <patrick@10xgenomics.com>"]
-edition = "2018"
+version = "2.0.0"
+authors = ["10x Genomics"]
+edition = "2024"
 
 [dependencies]
-bio = ">=0.29"
-rust-htslib = ">=0.36"
-csv = "1"
-failure = "0.1.8"
-sprs = "*"
-clap = "*"
-rayon = "1.7"
-terminal_size = "*"
-human-panic = "1.1.5"
-simplelog = "0.5.0"
-log = "*"
-tempfile = "*"
-itertools = "0.8"
-flate2 = { version = "1.0", features = ["rust_backend"], default-features = false }
+anyhow = "1"
+bio = "3"
+clap = { version = "4", features = ["derive", "wrap_help"] }
+flate2 = "1"
+human-panic = "2"
+log = "0.4"
+rayon = "1"
+rust-htslib = "1"
+simplelog = "0.12"
+sprs = "0.11"
+
+# The Cell Ranger libraries are licensed separately from VarTrix. They are not
+# vendored in this repository; Cargo fetches them from the public Cell Ranger
+# repository at build time.
+[dependencies.cr_vartrix]
+git = "https://github.com/10XGenomics/cellranger"
+tag = "cellranger-10.1.0"
+package = "vartrix"
+
+[dependencies.barcode]
+git = "https://github.com/10XGenomics/cellranger"
+tag = "cellranger-10.1.0"
+
+[dependencies.cr_types]
+git = "https://github.com/10XGenomics/cellranger"
+tag = "cellranger-10.1.0"
+
+[dependencies.metric]
+git = "https://github.com/10XGenomics/cellranger"
+tag = "cellranger-10.1.0"
+
+[dev-dependencies]
+tempfile = "3"
 
 [profile.release]
 debug = 1
