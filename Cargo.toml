@@ -13,7 +13,11 @@ sprs = "*"
 clap = "4"
 rayon = "1.7"
 terminal_size = "*"
+<<<<<<< HEAD
 human-panic = "2.0.4"
+=======
+human-panic = "1.1.5"
+>>>>>>> b33a99d (Bump simplelog from 0.5.3 to 0.12.2)
 simplelog = "0.12.2"
 log = "*"
 tempfile = "*"
