@@ -17,7 +17,11 @@ human-panic = "2.0.4"
 simplelog = "0.12.2"
 log = "*"
 tempfile = "*"
+<<<<<<< HEAD
 itertools = "0.15"
+=======
+itertools = "0.13"
+>>>>>>> 735c681 (Bump itertools from 0.8.0 to 0.13.0)
 flate2 = { version = "1.0", features = ["rust_backend"], default-features = false }
 
 [profile.release]

@@ -2029,7 +2029,11 @@ dependencies = [
  "failure",
  "flate2",
  "human-panic",
+<<<<<<< HEAD
  "itertools 0.15.0",
+=======
+ "itertools 0.13.0",
+>>>>>>> 735c681 (Bump itertools from 0.8.0 to 0.13.0)
  "log",
  "rayon",
  "rust-htslib",
