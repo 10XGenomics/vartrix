@@ -17,7 +17,7 @@ human-panic = "2.0.4"
 simplelog = "0.12.2"
 log = "*"
 tempfile = "*"
-itertools = "0.13"
+itertools = "0.15"
 flate2 = { version = "1.0", features = ["rust_backend"], default-features = false }
 
 [profile.release]
