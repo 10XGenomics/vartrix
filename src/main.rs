@@ -1041,7 +1041,7 @@ pub fn convert_to_counts(r: Vec<i8>) -> CellCounts {
 fn parse_scores(scores: &Vec<Scores>, umi: bool) -> Vec<CellCalls> {
     // parse the score vector into collapsed calls
     let mut r = Vec::new();
-    for (cell_index, cell_scores) in &scores.into_iter().group_by(|s| s.cell_index) {
+    for (cell_index, cell_scores) in &scores.into_iter().chunk_by(|s| s.cell_index) {
         if umi == true {
             // map of UMI to Score objects; keep track of all Scores for a given CB/UMI pair
             let mut parsed_scores = HashMap::new();
