@@ -5,31 +5,19 @@ authors = ["Ian Fiddes <ian.t.fiddes@gmail.com>", "Patrick Marks <patrick@10xgen
 edition = "2018"
 
 [dependencies]
-bio = ">=0.29"
-rust-htslib = ">=0.36"
+bio = "0.30"
+rust-htslib = "1.0.1"
 csv = "1"
 failure = "0.1.8"
 sprs = "*"
 clap = "4"
 rayon = "1.7"
 terminal_size = "*"
-<<<<<<< HEAD
-<<<<<<< HEAD
 human-panic = "2.0.4"
-=======
-human-panic = "1.1.5"
->>>>>>> b33a99d (Bump simplelog from 0.5.3 to 0.12.2)
-=======
-human-panic = "2.0.4"
->>>>>>> 55a0d13 (Bump human-panic from 1.1.5 to 2.0.4)
 simplelog = "0.12.2"
 log = "*"
 tempfile = "*"
-<<<<<<< HEAD
 itertools = "0.15"
-=======
-itertools = "0.13"
->>>>>>> 735c681 (Bump itertools from 0.8.0 to 0.13.0)
 flate2 = { version = "1.0", features = ["rust_backend"], default-features = false }
 
 [profile.release]

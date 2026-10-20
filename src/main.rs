@@ -938,13 +938,13 @@ pub fn evaluate_alns(
             "{} {} ref_aln:\n{}",
             locus_str,
             String::from_utf8(rec.qname().to_vec()).unwrap(),
-            ref_alignment.pretty(seq, &haps.rref)
+            ref_alignment.pretty(seq, &haps.rref, 80)
         );
         debug!(
             "{} {} alt_aln:\n{}",
             locus_str,
             String::from_utf8(rec.qname().to_vec()).unwrap(),
-            alt_alignment.pretty(seq, &haps.alt)
+            alt_alignment.pretty(seq, &haps.alt, 80)
         );
         debug!(
             "{} {} ref_score: {} alt_score: {}",
@@ -1075,7 +1075,7 @@ pub fn convert_to_counts(r: Vec<i8>) -> CellCounts {
 fn parse_scores(scores: &Vec<Scores>, umi: bool) -> Vec<CellCalls> {
     // parse the score vector into collapsed calls
     let mut r = Vec::new();
-    for (cell_index, cell_scores) in &scores.into_iter().group_by(|s| s.cell_index) {
+    for (cell_index, cell_scores) in &scores.into_iter().chunk_by(|s| s.cell_index) {
         if umi == true {
             // map of UMI to Score objects; keep track of all Scores for a given CB/UMI pair
             let mut parsed_scores = HashMap::new();
@@ -1261,9 +1261,9 @@ mod tests {
         }
         _main(cmds).unwrap();
 
-        let seen_mat: TriMat<usize> = read_matrix_market(out_file).unwrap();
-        let expected_mat: TriMat<usize> = read_matrix_market("test/test_consensus.mtx").unwrap();
-        assert_eq!(seen_mat.to_csr(), expected_mat.to_csr());
+        let seen_mat: TriMat<f64> = read_matrix_market(out_file).unwrap();
+        let expected_mat: TriMat<f64> = read_matrix_market("test/test_consensus.mtx").unwrap();
+        assert_eq!(seen_mat.to_csr::<usize>(), expected_mat.to_csr::<usize>());
     }
 
     #[test]
@@ -1291,9 +1291,9 @@ mod tests {
         }
         _main(cmds).unwrap();
 
-        let seen_mat: TriMat<usize> = read_matrix_market(out_file).unwrap();
-        let expected_mat: TriMat<usize> = read_matrix_market("test/test_frac.mtx").unwrap();
-        assert_eq!(seen_mat.to_csr(), expected_mat.to_csr());
+        let seen_mat: TriMat<f64> = read_matrix_market(out_file).unwrap();
+        let expected_mat: TriMat<f64> = read_matrix_market("test/test_frac.mtx").unwrap();
+        assert_eq!(seen_mat.to_csr::<usize>(), expected_mat.to_csr::<usize>());
     }
 
     #[test]
@@ -1325,12 +1325,12 @@ mod tests {
         }
         _main(cmds).unwrap();
 
-        let seen_mat: TriMat<usize> = read_matrix_market(out_file).unwrap();
-        let expected_mat: TriMat<usize> = read_matrix_market("test/test_coverage.mtx").unwrap();
-        assert_eq!(seen_mat.to_csr(), expected_mat.to_csr());
-        let seen_mat: TriMat<usize> = read_matrix_market(out_ref).unwrap();
-        let expected_mat: TriMat<usize> = read_matrix_market("test/test_coverage_ref.mtx").unwrap();
-        assert_eq!(seen_mat.to_csr(), expected_mat.to_csr());
+        let seen_mat: TriMat<f64> = read_matrix_market(out_file).unwrap();
+        let expected_mat: TriMat<f64> = read_matrix_market("test/test_coverage.mtx").unwrap();
+        assert_eq!(seen_mat.to_csr::<usize>(), expected_mat.to_csr::<usize>());
+        let seen_mat: TriMat<f64> = read_matrix_market(out_ref).unwrap();
+        let expected_mat: TriMat<f64> = read_matrix_market("test/test_coverage_ref.mtx").unwrap();
+        assert_eq!(seen_mat.to_csr::<usize>(), expected_mat.to_csr::<usize>());
     }
 
     #[test]
@@ -1363,13 +1363,13 @@ mod tests {
         }
         _main(cmds).unwrap();
 
-        let seen_mat: TriMat<usize> = read_matrix_market(out_file).unwrap();
-        let expected_mat: TriMat<usize> = read_matrix_market("test/test_coverage_umi.mtx").unwrap();
-        assert_eq!(seen_mat.to_csr(), expected_mat.to_csr());
-        let seen_mat: TriMat<usize> = read_matrix_market(out_ref).unwrap();
-        let expected_mat: TriMat<usize> =
+        let seen_mat: TriMat<f64> = read_matrix_market(out_file).unwrap();
+        let expected_mat: TriMat<f64> = read_matrix_market("test/test_coverage_umi.mtx").unwrap();
+        assert_eq!(seen_mat.to_csr::<usize>(), expected_mat.to_csr::<usize>());
+        let seen_mat: TriMat<f64> = read_matrix_market(out_ref).unwrap();
+        let expected_mat: TriMat<f64> =
             read_matrix_market("test/test_coverage_ref_umi.mtx").unwrap();
-        assert_eq!(seen_mat.to_csr(), expected_mat.to_csr());
+        assert_eq!(seen_mat.to_csr::<usize>(), expected_mat.to_csr::<usize>());
     }
 
     #[test]
@@ -1410,13 +1410,13 @@ mod tests {
         }
         _main(cmds).unwrap();
 
-        let seen_mat: TriMat<usize> = read_matrix_market(out_file).unwrap();
-        let expected_mat: TriMat<usize> = read_matrix_market("test/test_coverage_umi.mtx").unwrap();
-        assert_eq!(seen_mat.to_csr(), expected_mat.to_csr());
-        let seen_mat: TriMat<usize> = read_matrix_market(out_ref).unwrap();
-        let expected_mat: TriMat<usize> =
+        let seen_mat: TriMat<f64> = read_matrix_market(out_file).unwrap();
+        let expected_mat: TriMat<f64> = read_matrix_market("test/test_coverage_umi.mtx").unwrap();
+        assert_eq!(seen_mat.to_csr::<usize>(), expected_mat.to_csr::<usize>());
+        let seen_mat: TriMat<f64> = read_matrix_market(out_ref).unwrap();
+        let expected_mat: TriMat<f64> =
             read_matrix_market("test/test_coverage_ref_umi.mtx").unwrap();
-        assert_eq!(seen_mat.to_csr(), expected_mat.to_csr());
+        assert_eq!(seen_mat.to_csr::<usize>(), expected_mat.to_csr::<usize>());
 
         let old_bcs = load_barcodes("test/barcodes.tsv.gz").unwrap();
         let new_bcs = load_barcodes(out_bcs).unwrap();
@@ -1454,12 +1454,12 @@ mod tests {
         }
         _main(cmds).unwrap();
 
-        let seen_mat: TriMat<usize> = read_matrix_market(out_file).unwrap();
-        let expected_mat: TriMat<usize> = read_matrix_market("test/test_dna_umi.mtx").unwrap();
-        assert_eq!(seen_mat.to_csr(), expected_mat.to_csr());
-        let seen_mat: TriMat<usize> = read_matrix_market(out_ref).unwrap();
-        let expected_mat: TriMat<usize> = read_matrix_market("test/test_dna_ref_umi.mtx").unwrap();
-        assert_eq!(seen_mat.to_csr(), expected_mat.to_csr());
+        let seen_mat: TriMat<f64> = read_matrix_market(out_file).unwrap();
+        let expected_mat: TriMat<f64> = read_matrix_market("test/test_dna_umi.mtx").unwrap();
+        assert_eq!(seen_mat.to_csr::<usize>(), expected_mat.to_csr::<usize>());
+        let seen_mat: TriMat<f64> = read_matrix_market(out_ref).unwrap();
+        let expected_mat: TriMat<f64> = read_matrix_market("test/test_dna_ref_umi.mtx").unwrap();
+        assert_eq!(seen_mat.to_csr::<usize>(), expected_mat.to_csr::<usize>());
     }
 
     #[test]
@@ -1491,11 +1491,11 @@ mod tests {
         }
         _main(cmds).unwrap();
 
-        let seen_mat: TriMat<usize> = read_matrix_market(out_file).unwrap();
-        let expected_mat: TriMat<usize> = read_matrix_market("test/test_dna.mtx").unwrap();
-        assert_eq!(seen_mat.to_csr(), expected_mat.to_csr());
-        let seen_mat: TriMat<usize> = read_matrix_market(out_ref).unwrap();
-        let expected_mat: TriMat<usize> = read_matrix_market("test/test_dna_ref.mtx").unwrap();
-        assert_eq!(seen_mat.to_csr(), expected_mat.to_csr());
+        let seen_mat: TriMat<f64> = read_matrix_market(out_file).unwrap();
+        let expected_mat: TriMat<f64> = read_matrix_market("test/test_dna.mtx").unwrap();
+        assert_eq!(seen_mat.to_csr::<usize>(), expected_mat.to_csr::<usize>());
+        let seen_mat: TriMat<f64> = read_matrix_market(out_ref).unwrap();
+        let expected_mat: TriMat<f64> = read_matrix_market("test/test_dna_ref.mtx").unwrap();
+        assert_eq!(seen_mat.to_csr::<usize>(), expected_mat.to_csr::<usize>());
     }
 }
