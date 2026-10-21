@@ -1,0 +1,41 @@
+name: Build Binaries
+
+# Manual: build all four binaries and keep them as workflow artifacts (no release).
+on:
+  workflow_dispatch:
+  workflow_call:
+
+env:
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  build:
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-22.04
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-22.04-arm
+          - target: x86_64-apple-darwin
+            os: macos-15-intel
+          - target: aarch64-apple-darwin
+            os: macos-14
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Add target
+        run: rustup target add ${{ matrix.target }}
+      - name: Build
+        run: cargo build --release --locked --target ${{ matrix.target }}
+      - name: Smoke test
+        run: target/${{ matrix.target }}/release/vartrix --help | grep -q -i usage
+      - name: Stage artifact
+        run: |
+          mkdir dist
+          cp target/${{ matrix.target }}/release/vartrix dist/vartrix-${{ matrix.target }}
+      - uses: actions/upload-artifact@v7
+        with:
+          name: vartrix-${{ matrix.target }}
+          path: dist/vartrix-${{ matrix.target }}

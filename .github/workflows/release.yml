@@ -1,99 +1,65 @@
+name: Release
+
+# Merging a Cargo.toml version bump to master tags and publishes that version.
 on:
   push:
-    # Sequence of patterns matched against refs/tags
-    tags:
-    - 'v*' # Push events to matching v*, i.e. v1.0, v20.15.10
+    branches:
+      - master
+    paths:
+      - Cargo.toml
+  workflow_dispatch:
 
-name: Build and Upload Release 
+permissions:
+  contents: write
 
-env:
-  CARGO_INCREMENTAL: 0
+concurrency:
+  group: release
+  cancel-in-progress: false
 
 jobs:
-
-  linux:
+  check:
     runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.version.outputs.tag }}
+      exists: ${{ steps.version.outputs.exists }}
     steps:
-      - name: Checkout git repository
-        uses: actions/checkout@master
-      - name: Login to GitHub Package Registry
-        run: docker login docker.pkg.github.com -u 10xbuild -p ${{secrets.GH_PAT}}
-      - name: Run Rust tests
-        run: >
-          docker run -v ${{github.workspace}}:/root
-          docker.pkg.github.com/10xdev/toolchain-scripts/toolchain:latest
-          /bin/bash -lec '
-          apt-get update && apt-get install -y --no-install-recommends ca-certificates;
-          cargo build --release;
-          target/release/vartrix --help | grep -q Usage;
-          readelf -V target/release/vartrix;
-          ';
-          mkdir ${{runner.temp}}/artifacts;
-          cp -a target/release/vartrix ${{runner.temp}}/artifacts/vartrix-linux
-      - name: Upload build artifact
-        uses: actions/upload-artifact@v7
-        with:
-          name: vartrix
-          path: ${{runner.temp}}/artifacts
-  macos:
-    runs-on: macos-latest
-    env:
-      MACOSX_DEPLOYMENT_TARGET: 10.7
-    steps:
-      - name: Checkout git repository
-        uses: actions/checkout@master
-      - name: Run Rust tests
+      - uses: actions/checkout@v4
+      - name: Read version from Cargo.toml
+        id: version
         run: |
-          cargo build --release
-          target/release/vartrix --help | grep -q Usage
-          mkdir ${{runner.temp}}/artifacts
-          cp -a target/release/vartrix ${{runner.temp}}/artifacts/vartrix-macos
-      - name: Upload build artifact
-        uses: actions/upload-artifact@v7
-        with:
-          name: vartrix
-          path: ${{runner.temp}}/artifacts
+          version=$(sed -n 's/^version *= *"\(.*\)"/\1/p' Cargo.toml | head -n1)
+          tag="v${version}"
+          git fetch --tags --quiet
+          if git rev-parse -q --verify "refs/tags/${tag}" > /dev/null; then
+            echo "Tag ${tag} already exists; nothing to release."
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "Releasing ${tag}"
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
 
-  setup-release:
-    needs: [linux, macos]
+  build:
+    needs: check
+    if: needs.check.outputs.exists == 'false'
+    uses: ./.github/workflows/build.yml
+
+  release:
+    needs: [check, build]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v8
         with:
-          name: vartrix
-          path: ${{runner.temp}}/artifacts
-
-      - run: ls ${{runner.temp}}/artifacts
-
-      - name: Create Release
-        id: create_release
-        uses: actions/create-release@v1
+          path: dist
+          merge-multiple: true
+      - name: Create release
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          tag_name: ${{ github.ref }}
-          release_name: Release ${{ github.ref }}
-          draft: false
-          prerelease: false
-
-      - name: Upload Linux
-        id: upload-linux-release 
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ steps.create_release.outputs.upload_url }} 
-          asset_path: ${{runner.temp}}/artifacts/vartrix-linux
-          asset_name: vartrix_linux
-          asset_content_type: application/octet-stream
-
-      - name: Upload Mac
-        id: upload-mac-release
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ steps.create_release.outputs.upload_url }} 
-          asset_path: ${{runner.temp}}/artifacts/vartrix-macos
-          asset_name: vartrix_macos
-          asset_content_type: application/octet-stream
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          chmod +x dist/*
+          ls -l dist
+          gh release create "${{ needs.check.outputs.tag }}" dist/* \
+            --repo "${{ github.repository }}" \
+            --target "${{ github.sha }}" \
+            --title "${{ needs.check.outputs.tag }}" \
+            --generate-notes
