@@ -5,12 +5,12 @@ authors = ["Ian Fiddes <ian.t.fiddes@gmail.com>", "Patrick Marks <patrick@10xgen
 edition = "2018"
 
 [dependencies]
-bio = ">=0.29"
-rust-htslib = ">=0.36"
+bio = "0.30"
+rust-htslib = "1.0.1"
 csv = "1"
 failure = "0.1.8"
 sprs = "*"
-clap = "*"
+clap = "4"
 rayon = "1.7"
 terminal_size = "*"
 human-panic = "2.0.4"

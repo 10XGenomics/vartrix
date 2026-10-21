@@ -25,7 +25,7 @@ jobs:
           /bin/bash -lec '
           apt-get update && apt-get install -y --no-install-recommends ca-certificates;
           cargo build --release;
-          target/release/vartrix --help | grep -q USAGE;
+          target/release/vartrix --help | grep -q Usage;
           readelf -V target/release/vartrix;
           ';
           mkdir ${{runner.temp}}/artifacts;
@@ -45,7 +45,7 @@ jobs:
       - name: Run Rust tests
         run: |
           cargo build --release
-          target/release/vartrix --help | grep -q USAGE
+          target/release/vartrix --help | grep -q Usage
           mkdir ${{runner.temp}}/artifacts
           cp -a target/release/vartrix ${{runner.temp}}/artifacts/vartrix-macos
       - name: Upload build artifact
