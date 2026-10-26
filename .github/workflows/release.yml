@@ -23,7 +23,7 @@ jobs:
       tag: ${{ steps.version.outputs.tag }}
       exists: ${{ steps.version.outputs.exists }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Read version from Cargo.toml
         id: version
         run: |
